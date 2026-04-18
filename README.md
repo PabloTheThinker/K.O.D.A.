@@ -1,34 +1,76 @@
-# K.O.D.A.
+<p align="center">
+  <h1 align="center">K.O.D.A.</h1>
+  <p align="center"><strong>Kinetic Operative Defense Agent</strong></p>
+  <p align="center">Open-source AI security agent harness — grounded tool-use, honest scanning, model-agnostic.</p>
+</p>
 
-**Kinetic Operative Defense Agent** — an open-source security specialist agent.
+<p align="center">
+  <a href="https://github.com/PabloTheThinker/K.O.D.A./blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="MIT License"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.11+-blue?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.11+"></a>
+  <a href="https://ollama.ai"><img src="https://img.shields.io/badge/Ollama-Air--Gap_Ready-black?style=for-the-badge" alt="Ollama"></a>
+  <a href="https://vektraindustries.com"><img src="https://img.shields.io/badge/Vektra-Industries-8b5cf6?style=for-the-badge" alt="Vektra Industries"></a>
+</p>
 
-Built by [Vektra Industries](https://vektra.industries).
+<p align="center">
+  <a href="#install">Install</a> &nbsp;|&nbsp;
+  <a href="#quick-start">Quick Start</a> &nbsp;|&nbsp;
+  <a href="https://github.com/PabloTheThinker/K.O.D.A./issues">Issues</a> &nbsp;|&nbsp;
+  <a href="https://vektraindustries.com">Website</a>
+</p>
 
-K.O.D.A. is a harness for running a security-focused AI agent against your code,
-hosts, and infrastructure. It ships with a tool-first execution model, a grounding
-verifier that rejects fabricated claims, and a semantic router that escalates
-action-intent prompts into real tool calls before the model can improvise.
+---
+
+K.O.D.A. is a harness for running a security-focused AI agent against code, hosts, and infrastructure. It ships a tool-first execution model, a grounding verifier that rejects fabricated claims (no invented CVEs, no invented file paths), and a semantic layer that turns action-intent prompts into real tool calls before the model can improvise.
+
+Run it on a SOC workstation, an air-gapped analyst laptop, or anywhere Python runs.
+
+```
+Ask → Route → Tool-call → Ground → Respond
+```
 
 ## Why another agent
 
-Most agent frameworks are general-purpose. Security work isn't. When a user asks
-"is my project safe?" a general-purpose agent will often write a confident-looking
-report from thin air — fake CVEs, fake file paths, fake line numbers. K.O.D.A.
-treats every security claim as ungrounded until a tool has produced evidence for
-it.
+Most agent frameworks are general-purpose. Security work isn't. When a user asks *"is my project safe?"* a general-purpose agent will often write a confident-looking report from thin air — fake CVEs, fake file paths, fake line numbers. K.O.D.A. treats every security claim as ungrounded until a tool has produced evidence for it.
+
+## Install
+
+```bash
+curl -fsSL https://koda.vektraindustries.com/install | bash
+```
+
+Handles everything: Python 3.11+ via `uv`, venv, dependencies, PATH, and the setup wizard.
+
+**Or manually:**
+
+```bash
+git clone https://github.com/PabloTheThinker/K.O.D.A..git && cd K.O.D.A.
+python3 -m venv .venv && source .venv/bin/activate
+pip install .
+koda setup
+```
+
+## Quick Start
+
+```bash
+koda setup                  # Configure providers (Anthropic, Claude CLI, Ollama)
+koda doctor                 # Verify config + provider status
+koda                        # Start the interactive REPL
+```
+
+## Providers
+
+| Provider     | How it's picked                                    | Model default         |
+|--------------|----------------------------------------------------|-----------------------|
+| Anthropic    | `ANTHROPIC_API_KEY` in env                         | `claude-sonnet-4-6`   |
+| Claude CLI   | `claude` binary on `PATH`                          | CLI default           |
+| Ollama       | `http://127.0.0.1:11434` reachable                 | First model installed |
 
 ## Status
 
-Early. The harness skeleton is in place; provider adapters, tool bundles, and
-the grounding verifier are being wired up. Not production-ready. Expect breaking
-changes.
+Early. The harness, provider adapters, grounding verifier, approval gate, and the first security tools (`fs.list`, `fs.read`, `scan.run`) are live. Not production-ready. Expect breaking changes.
 
 ## License
 
 MIT. See [LICENSE](./LICENSE).
 
-Architectural credit: this codebase is an independent reimplementation
-inspired by the open-source harness patterns of
-[Nous Research's Hermes](https://github.com/NousResearch/hermes-agent) (MIT)
-and [OpenClaw](https://www.npmjs.com/package/openclaw). No code was copied; the
-patterns were analyzed and rewritten from scratch for the security domain.
+Architectural credit: this codebase is an independent reimplementation inspired by the open-source harness patterns of [Nous Research's Hermes](https://github.com/NousResearch/hermes-agent) (MIT) and [OpenClaw](https://www.npmjs.com/package/openclaw). No code was copied; the patterns were analyzed and rewritten from scratch for the security domain.

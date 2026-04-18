@@ -31,6 +31,42 @@ YELLOW = "\033[33m"
 DIM = "\033[2m"
 BOLD = "\033[1m"
 RESET = "\033[0m"
+CLEAR_LINE = "\033[2K"
+
+
+def _can_raw() -> bool:
+    if not _IS_TTY:
+        return False
+    try:
+        import termios  # noqa: F401
+        import tty  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _read_key() -> str:
+    import termios
+    import tty
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        ch = sys.stdin.read(1)
+        if ch == "\x1b":
+            seq = sys.stdin.read(2)
+            if seq == "[A":
+                return "up"
+            if seq == "[B":
+                return "down"
+            return "esc"
+        if ch in ("\r", "\n"):
+            return "enter"
+        if ch == "\x03":
+            raise KeyboardInterrupt
+        return ch
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
 
 
 _BANNER = f"""
@@ -73,6 +109,55 @@ def _confirm(label: str, default: bool = True) -> bool:
 
 
 def _select(label: str, options: list[str], default: int = 0) -> int:
+    if not options:
+        return 0
+    if _can_raw():
+        return _select_raw(label, options, default)
+    return _select_fallback(label, options, default)
+
+
+def _select_raw(label: str, options: list[str], default: int) -> int:
+    cursor = default
+    n = len(options)
+
+    def _draw() -> None:
+        sys.stdout.write(f"\r{BOLD}{label}{RESET}\n")
+        for i, opt in enumerate(options):
+            if i == cursor:
+                sys.stdout.write(f"  {GREEN}› {opt}{RESET}\n")
+            else:
+                sys.stdout.write(f"  {DIM}  {opt}{RESET}\n")
+        sys.stdout.flush()
+
+    def _clear(count: int) -> None:
+        for _ in range(count):
+            sys.stdout.write("\033[A" + CLEAR_LINE)
+        sys.stdout.flush()
+
+    _draw()
+    while True:
+        key = _read_key()
+        if key in ("up", "k"):
+            cursor = (cursor - 1) % n
+        elif key in ("down", "j"):
+            cursor = (cursor + 1) % n
+        elif key == "enter":
+            _clear(n + 1)
+            sys.stdout.write(f"{BOLD}{label}{RESET} {GREEN}{options[cursor]}{RESET}\n")
+            sys.stdout.flush()
+            return cursor
+        elif key == "esc":
+            _clear(n + 1)
+            sys.stdout.write(f"{BOLD}{label}{RESET} {DIM}{options[default]}{RESET}\n")
+            sys.stdout.flush()
+            return default
+        else:
+            continue
+        _clear(n + 1)
+        _draw()
+
+
+def _select_fallback(label: str, options: list[str], default: int) -> int:
     print(f"\n{CYAN}{label}{RESET}")
     for i, opt in enumerate(options):
         marker = f"{GOLD}*{RESET}" if i == default else " "

@@ -1,204 +1,293 @@
 #!/usr/bin/env bash
+# ============================================================================
 # K.O.D.A. — Kinetic Operative Defense Agent
-# One-shot installer. Usage:
-#   curl -fsSL https://koda.vektra.dev/install.sh | bash
+# ============================================================================
+# Open-source AI security agent harness — by Vektra Industries
 #
-# What this does (and what it does NOT do):
-#   - verifies Python >= 3.11
-#   - installs K.O.D.A. from PyPI (or from source if you set KODA_SOURCE=1)
-#   - runs `koda setup` so you hit the same wizard as a source install
-#   - does NOT touch your system Python site-packages without your consent;
-#     we use pipx if available, otherwise venv at ~/.koda/.venv.
+# Usage:
+#   curl -fsSL https://koda.vektraindustries.com/install | bash
 #
-# Env overrides:
-#   KODA_REPO          git URL for source install (default: https://github.com/PabloTheThinker/K.O.D.A.)
-#   KODA_REF           git ref for source install (default: main)
-#   KODA_SOURCE=1      force source install (skip PyPI)
-#   KODA_NO_WIZARD=1   skip the post-install wizard
-#   KODA_HOME          config dir (default: $HOME/.koda)
+# Options:
+#   curl -fsSL ... | bash -s -- --branch dev
+#   curl -fsSL ... | bash -s -- --dir ~/my-koda
+#   curl -fsSL ... | bash -s -- --no-wizard
+# ============================================================================
 
 set -euo pipefail
 
-GOLD=$'\e[38;5;178m'
-GREEN=$'\e[32m'
-RED=$'\e[31m'
-YELLOW=$'\e[33m'
-DIM=$'\e[2m'
-BOLD=$'\e[1m'
-RESET=$'\e[0m'
+# ── Colors ─────────────────────────────────────────────────────────
+GOLD='\033[38;5;178m'
+GREEN='\033[32m'
+RED='\033[31m'
+CYAN='\033[36m'
+YELLOW='\033[33m'
+DIM='\033[2m'
+BOLD='\033[1m'
+RESET='\033[0m'
 
-KODA_REPO="${KODA_REPO:-https://github.com/PabloTheThinker/K.O.D.A.}"
-KODA_REF="${KODA_REF:-main}"
-KODA_HOME="${KODA_HOME:-$HOME/.koda}"
-KODA_SOURCE="${KODA_SOURCE:-0}"
-KODA_NO_WIZARD="${KODA_NO_WIZARD:-0}"
+# ── Configuration ──────────────────────────────────────────────────
+REPO_URL_SSH="git@github.com:PabloTheThinker/K.O.D.A..git"
+REPO_URL_HTTPS="https://github.com/PabloTheThinker/K.O.D.A..git"
+KODA_HOME="${KODA_HOME:-$HOME/koda}"
+INSTALL_DIR="${KODA_INSTALL_DIR:-$KODA_HOME}"
+MIN_PYTHON="3.11"
+BRANCH="main"
+RUN_WIZARD=1
 
-info()  { printf "  %s%s%s\n" "$DIM" "$1" "$RESET"; }
-ok()    { printf "  %s✓%s %s\n" "$GREEN" "$RESET" "$1"; }
-warn()  { printf "  %s○ %s%s\n" "$YELLOW" "$1" "$RESET"; }
-err()   { printf "  %s✗ %s%s\n" "$RED" "$1" "$RESET" 1>&2; }
-step()  { printf "\n%s━━━ %s%s\n" "$GOLD" "$1" "$RESET"; }
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --branch)       BRANCH="$2"; shift 2 ;;
+        --dir)          INSTALL_DIR="$2"; KODA_HOME="$2"; shift 2 ;;
+        --no-wizard)    RUN_WIZARD=0; shift ;;
+        -h|--help)
+            echo "K.O.D.A. Installer"
+            echo ""
+            echo "Options:"
+            echo "  --branch NAME   Git branch (default: main)"
+            echo "  --dir PATH      Install directory (default: ~/koda)"
+            echo "  --no-wizard     Skip the setup wizard"
+            echo "  -h, --help      Show this help"
+            exit 0
+            ;;
+        *) echo "Unknown option: $1" >&2; exit 1 ;;
+    esac
+done
 
-banner() {
-  cat <<BANNER
-${GOLD}${BOLD}
-  ██╗  ██╗ ██████╗ ██████╗  █████╗
-  ██║ ██╔╝██╔═══██╗██╔══██╗██╔══██╗
-  █████╔╝ ██║   ██║██║  ██║███████║
-  ██╔═██╗ ██║   ██║██║  ██║██╔══██║
-  ██║  ██╗╚██████╔╝██████╔╝██║  ██║
-  ╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═╝${RESET}
-  ${BOLD}Kinetic Operative Defense Agent${RESET}
-  ${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}
-  ${DIM}Vektra Industries • Open Source • AI Security${RESET}
-BANNER
+# ── Helpers ────────────────────────────────────────────────────────
+info()  { printf "${CYAN}→${RESET} %s\n" "$1"; }
+ok()    { printf "${GREEN}✓${RESET} %s\n" "$1"; }
+warn()  { printf "${YELLOW}⚠${RESET} %s\n" "$1"; }
+fail()  { printf "${RED}✗${RESET} %s\n" "$1"; exit 1; }
+
+# ── Platform detection ─────────────────────────────────────────────
+detect_platform() {
+    case "$(uname -s)" in
+        Linux*)
+            OS="linux"
+            if [ -f /etc/os-release ]; then
+                . /etc/os-release
+                DISTRO="$ID"
+            else
+                DISTRO="unknown"
+            fi
+            ;;
+        Darwin*) OS="macos"; DISTRO="macos" ;;
+        CYGWIN*|MINGW*|MSYS*)
+            fail "Windows detected. Use WSL: wsl --install, then re-run this script inside WSL."
+            ;;
+        *) fail "Unsupported OS: $(uname -s)." ;;
+    esac
+
+    case "$(uname -m)" in
+        x86_64|amd64)  ARCH="x64" ;;
+        arm64|aarch64) ARCH="arm64" ;;
+        *)             ARCH="$(uname -m)" ;;
+    esac
+
+    if [ "$OS" = "macos" ] && [ "$ARCH" = "x64" ]; then
+        if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = "1" ]; then
+            ARCH="arm64"
+        fi
+    fi
+
+    ok "Platform: $OS-$ARCH ($DISTRO)"
 }
 
-check_python() {
-  step "Checking Python"
-  local candidates=("python3.13" "python3.12" "python3.11" "python3")
-  for p in "${candidates[@]}"; do
-    if command -v "$p" >/dev/null 2>&1; then
-      local v
-      v=$("$p" -c 'import sys; print(".".join(map(str, sys.version_info[:3])))' 2>/dev/null || echo "")
-      if "$p" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
-        PY="$p"
-        ok "$p → $v"
+# ── Dependency: uv ─────────────────────────────────────────────────
+ensure_uv() {
+    for loc in "$(command -v uv 2>/dev/null || true)" "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv"; do
+        if [ -n "$loc" ] && [ -x "$loc" ]; then
+            UV_CMD="$loc"
+            ok "uv found"
+            return 0
+        fi
+    done
+
+    info "Installing uv..."
+    if curl -LsSf https://astral.sh/uv/install.sh | sh 2>/dev/null; then
+        for loc in "$HOME/.local/bin/uv" "$HOME/.cargo/bin/uv" "$(command -v uv 2>/dev/null || true)"; do
+            if [ -n "$loc" ] && [ -x "$loc" ]; then
+                UV_CMD="$loc"
+                ok "uv installed"
+                return 0
+            fi
+        done
+        fail "uv installed but not on PATH. Add ~/.local/bin to PATH and re-run."
+    else
+        fail "Failed to install uv. See https://docs.astral.sh/uv/"
+    fi
+}
+
+# ── Dependency: Python ─────────────────────────────────────────────
+ensure_python() {
+    if $UV_CMD python find "$MIN_PYTHON" &>/dev/null; then
+        PYTHON_PATH=$($UV_CMD python find "$MIN_PYTHON")
+        ok "Python $($PYTHON_PATH --version 2>&1 | awk '{print $2}')"
         return 0
-      fi
     fi
-  done
-  err "Python 3.11+ not found."
-  info "install from: https://www.python.org/downloads/"
-  exit 1
-}
 
-pick_installer() {
-  step "Picking install method"
-  if command -v pipx >/dev/null 2>&1; then
-    INSTALLER="pipx"
-    ok "pipx found — will install as isolated app"
-    return
-  fi
-  INSTALLER="venv"
-  VENV_DIR="$KODA_HOME/.venv"
-  ok "using venv at $VENV_DIR"
-}
-
-install_from_pypi() {
-  step "Installing K.O.D.A. from PyPI"
-  if [[ "$INSTALLER" == "pipx" ]]; then
-    pipx install --force koda || {
-      warn "PyPI install via pipx failed; falling back to source install"
-      install_from_source
-      return
-    }
-    ok "pipx installed koda"
-  else
-    mkdir -p "$KODA_HOME"
-    "$PY" -m venv "$VENV_DIR"
-    "$VENV_DIR/bin/pip" install --upgrade pip >/dev/null
-    if ! "$VENV_DIR/bin/pip" install koda; then
-      warn "PyPI install failed; falling back to source install"
-      install_from_source
-      return
+    info "Installing Python $MIN_PYTHON via uv..."
+    if $UV_CMD python install "$MIN_PYTHON"; then
+        PYTHON_PATH=$($UV_CMD python find "$MIN_PYTHON")
+        ok "Python installed"
+    else
+        fail "Failed to install Python. Install Python $MIN_PYTHON+ manually, then re-run."
     fi
-    ok "koda installed into $VENV_DIR"
-  fi
 }
 
-install_from_source() {
-  step "Installing K.O.D.A. from source ($KODA_REPO @ $KODA_REF)"
-  local tmp
-  tmp="$(mktemp -d -t koda-install-XXXXXX)"
-  trap 'rm -rf "$tmp"' RETURN
-  if ! command -v git >/dev/null 2>&1; then
-    err "git required for source install. install git, or set KODA_SOURCE=0."
-    exit 1
-  fi
-  git clone --depth 1 --branch "$KODA_REF" "$KODA_REPO" "$tmp/koda" >/dev/null 2>&1 || {
-    err "git clone failed: $KODA_REPO @ $KODA_REF"
-    exit 1
-  }
-  if [[ "$INSTALLER" == "pipx" ]]; then
-    pipx install --force "$tmp/koda"
-    ok "pipx installed koda from source"
-  else
-    mkdir -p "$KODA_HOME"
-    "$PY" -m venv "$VENV_DIR"
-    "$VENV_DIR/bin/pip" install --upgrade pip >/dev/null
-    "$VENV_DIR/bin/pip" install "$tmp/koda"
-    ok "koda installed into $VENV_DIR"
-  fi
-}
-
-link_binary() {
-  step "Linking koda command"
-  local target
-  if [[ "$INSTALLER" == "pipx" ]]; then
-    target="$(command -v koda || true)"
-    if [[ -n "$target" ]]; then
-      ok "koda on PATH → $target"
-      return
+# ── Dependency: Git ────────────────────────────────────────────────
+ensure_git() {
+    if command -v git &>/dev/null; then
+        ok "Git $(git --version | awk '{print $3}')"
+        return 0
     fi
-    warn "koda not on PATH — run: pipx ensurepath"
-    return
-  fi
-  target="$VENV_DIR/bin/koda"
-  if [[ ! -x "$target" ]]; then
-    err "koda binary missing at $target"
+
+    printf "${RED}✗${RESET} Git not found. Install it first:\n"
+    case "$OS" in
+        linux)
+            case "$DISTRO" in
+                ubuntu|debian) echo "  sudo apt install git" ;;
+                fedora)        echo "  sudo dnf install git" ;;
+                arch)          echo "  sudo pacman -S git" ;;
+                *)             echo "  Install git with your package manager" ;;
+            esac
+            ;;
+        macos) echo "  xcode-select --install" ;;
+    esac
     exit 1
-  fi
-  local bin_dir="$HOME/.local/bin"
-  mkdir -p "$bin_dir"
-  ln -sf "$target" "$bin_dir/koda"
-  ok "symlinked $bin_dir/koda → $target"
-  case ":$PATH:" in
-    *":$bin_dir:"*) ;;
-    *) warn "$bin_dir is not on PATH. add this to your shell rc:"
-       info "  export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
-  esac
 }
 
+# ── Clone / update source ──────────────────────────────────────────
+fetch_source() {
+    SOURCE_DIR="$INSTALL_DIR/.source"
+
+    if [ -d "$SOURCE_DIR/.git" ]; then
+        info "Updating existing installation..."
+        cd "$SOURCE_DIR"
+        git fetch origin 2>/dev/null
+        git checkout "$BRANCH" 2>/dev/null
+        git pull --ff-only origin "$BRANCH" 2>/dev/null || git reset --hard "origin/$BRANCH"
+        ok "Source updated"
+    else
+        info "Downloading K.O.D.A...."
+        mkdir -p "$INSTALL_DIR"
+        if GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=5" \
+           git clone --depth 1 --branch "$BRANCH" "$REPO_URL_SSH" "$SOURCE_DIR" 2>/dev/null; then
+            ok "Downloaded via SSH"
+        else
+            rm -rf "$SOURCE_DIR" 2>/dev/null
+            if git clone --depth 1 --branch "$BRANCH" "$REPO_URL_HTTPS" "$SOURCE_DIR"; then
+                ok "Downloaded"
+            else
+                fail "Failed to download K.O.D.A."
+            fi
+        fi
+    fi
+}
+
+# ── Create venv + install ──────────────────────────────────────────
+install_koda() {
+    VENV_DIR="$INSTALL_DIR/.venv"
+
+    if [ ! -d "$VENV_DIR" ]; then
+        info "Creating environment..."
+        $UV_CMD venv "$VENV_DIR" --python "$MIN_PYTHON" --quiet
+    fi
+
+    info "Installing K.O.D.A...."
+    export VIRTUAL_ENV="$VENV_DIR"
+
+    if $UV_CMD pip install --quiet "$SOURCE_DIR" 2>/dev/null; then
+        ok "Installed"
+    else
+        fail "Installation failed"
+    fi
+}
+
+# ── Shell integration ──────────────────────────────────────────────
+setup_shell() {
+    BIN_DIR="$HOME/.local/bin"
+    mkdir -p "$BIN_DIR"
+
+    # Launcher wrapper — unsets PYTHONHASHSEED to avoid inherited bad values
+    cat > "$BIN_DIR/koda" << LAUNCHER
+#!/usr/bin/env bash
+# K.O.D.A. launcher — generated by installer
+unset PYTHONHASHSEED
+exec "$VENV_DIR/bin/koda" "\$@"
+LAUNCHER
+    chmod +x "$BIN_DIR/koda"
+
+    if echo "$PATH" | tr ':' '\n' | grep -qx "$BIN_DIR"; then
+        ok "koda on PATH"
+    else
+        SHELL_RC=""
+        LOGIN_SHELL="$(basename "${SHELL:-/bin/bash}")"
+        case "$LOGIN_SHELL" in
+            zsh) SHELL_RC="$HOME/.zshrc"; [ -f "$SHELL_RC" ] || touch "$SHELL_RC" ;;
+            *)   SHELL_RC="$HOME/.bashrc"; [ -f "$SHELL_RC" ] || SHELL_RC="$HOME/.profile" ;;
+        esac
+
+        if [ -n "$SHELL_RC" ] && [ -f "$SHELL_RC" ]; then
+            if ! grep -q '\.local/bin' "$SHELL_RC" 2>/dev/null; then
+                printf '\n# K.O.D.A.\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$SHELL_RC"
+                ok "Added ~/.local/bin to PATH in $(basename "$SHELL_RC")"
+            fi
+        fi
+        export PATH="$BIN_DIR:$PATH"
+    fi
+}
+
+# ── Run wizard ─────────────────────────────────────────────────────
 run_wizard() {
-  if [[ "$KODA_NO_WIZARD" == "1" ]]; then
-    step "Skipping wizard (KODA_NO_WIZARD=1)"
-    info "run it later with: koda setup"
-    return
-  fi
-  step "Running setup wizard"
-  if ! command -v koda >/dev/null 2>&1; then
-    warn "koda not on PATH yet — run the wizard manually:"
-    info "  koda setup"
-    return
-  fi
-  koda setup || warn "wizard exited non-zero — re-run with: koda setup"
+    if [ "$RUN_WIZARD" != "1" ]; then
+        info "Skipping wizard (--no-wizard). Run later: koda setup"
+        return
+    fi
+    info "Launching setup wizard..."
+    "$VENV_DIR/bin/koda" setup || warn "Wizard exited non-zero — re-run with: koda setup"
 }
 
-done_msg() {
-  cat <<EOF
+# ── Success banner ─────────────────────────────────────────────────
+print_success() {
+    echo ""
+    printf "  ${GREEN}${BOLD}✓ K.O.D.A. installed${RESET}\n"
+    echo ""
+    printf "  ${GOLD}koda${RESET}              Start the REPL\n"
+    printf "  ${GOLD}koda setup${RESET}         Re-run wizard\n"
+    printf "  ${GOLD}koda doctor${RESET}        Diagnose config\n"
+    echo ""
 
-${GOLD}━━━ Done${RESET}
-  start the REPL:  ${BOLD}koda${RESET}
-  re-run wizard:   ${BOLD}koda setup${RESET}
-  diagnose:        ${BOLD}koda doctor${RESET}
-  docs:            ${DIM}${KODA_REPO}${RESET}
+    LOGIN_SHELL="$(basename "${SHELL:-/bin/bash}")"
+    if ! command -v koda &>/dev/null; then
+        printf "  ${DIM}Restart your shell or run:${RESET}\n"
+        if [ "$LOGIN_SHELL" = "zsh" ]; then
+            printf "    source ~/.zshrc\n"
+        else
+            printf "    source ~/.bashrc\n"
+        fi
+        echo ""
+    fi
 
-EOF
+    printf "  ${DIM}Docs: https://github.com/PabloTheThinker/K.O.D.A.${RESET}\n"
+    echo ""
 }
 
+# ── Main ───────────────────────────────────────────────────────────
 main() {
-  banner
-  check_python
-  pick_installer
-  if [[ "$KODA_SOURCE" == "1" ]]; then
-    install_from_source
-  else
-    install_from_pypi
-  fi
-  link_binary
-  run_wizard
-  done_msg
+    echo ""
+    printf "  ${GOLD}${BOLD}K.O.D.A.${RESET} ${DIM}— installer${RESET}\n"
+    echo ""
+
+    detect_platform
+    ensure_git
+    ensure_uv
+    ensure_python
+    fetch_source
+    install_koda
+    setup_shell
+    run_wizard
+    print_success
 }
 
-main "$@"
+main
