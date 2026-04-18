@@ -1,25 +1,36 @@
 """K.O.D.A. first-run setup wizard.
 
-Uses the shared wizard primitives (Prompter, per-provider setup). Detects
-providers, captures API keys (persisted to ~/.koda/secrets.env, chmod 600),
-picks a model, optionally configures quota, writes ~/.koda/config.yaml,
-and runs a one-shot self-test.
+Multi-stage onboarding for a security-specialist agent harness. The wizard
+walks the operator through risk acknowledgement, provider setup, engagement
+scoping, approval tier, scanner probing, and a live self-test.
 
-Koda is a harness — it mounts on any engine. The wizard reflects that:
-local-first (Ollama, Claude CLI), then the Anthropic / OpenAI /
-Google / xAI / Groq / Together / OpenRouter / DeepSeek / Mistral tier.
+Stages:
+    1. Banner + risk acknowledgement (bypass via KODA_ACCEPT_RISK=1)
+    2. Welcome-back branch (if config already exists)
+    3. Quick vs Full fork
+    4. Provider selection + configuration
+    5. Engagement naming
+    6. Approval tier (safe / medium / all / none)
+    7. Scanner probe with install hints
+    8. Scope targets (optional)
+    9. Write config, self-test, launch
+
+The wizard reflects K.O.D.A.'s harness model: mount on any engine, scope to
+one engagement at a time, audit everything, ground every claim.
 """
 from __future__ import annotations
 
 import asyncio
 import os
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
 from ..adapters import create_provider
 from ..adapters.base import Message, Role
-from ..config import CONFIG_PATH, KODA_HOME, save_config
+from ..config import CONFIG_PATH, KODA_HOME, load_config, save_config
+from ..security.scanners.registry import detect_installed_scanners
 from ..wizard import (
     Prompter,
     ProviderSetupResult,
@@ -45,6 +56,24 @@ from ..wizard import (
 )
 
 SECRETS_PATH = KODA_HOME / "secrets.env"
+ACTIVE_ENGAGEMENT_FILE = KODA_HOME / "active_engagement"
+
+_ENGAGEMENT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+_SCOPE_TARGET_CAP = 50
+
+
+# Install hints for scanners that K.O.D.A. wraps. Shown in Stage 7 when the
+# binary is missing from PATH.
+_SCANNER_INSTALL_HINTS: dict[str, str] = {
+    "semgrep":     "pip install semgrep",
+    "trivy":       "brew install trivy  |  https://trivy.dev/getting-started/installation/",
+    "gitleaks":    "brew install gitleaks  |  https://github.com/gitleaks/gitleaks",
+    "nuclei":      "go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest",
+    "bandit":      "pip install bandit",
+    "osv-scanner": "brew install osv-scanner  |  go install github.com/google/osv-scanner/cmd/osv-scanner@v1",
+    "nmap":        "apt install nmap  |  brew install nmap",
+    "grype":       "brew install grype  |  https://github.com/anchore/grype",
+}
 
 
 @dataclass(frozen=True)
@@ -52,12 +81,11 @@ class _ProviderOption:
     value: str
     label: str
     base_hint: str
-    detector: Callable[[], Any] | None  # returns truthy if reachable/configured
+    detector: Callable[[], Any] | None
     detail_fn: Callable[[Any], str] | None = None
 
 
-# Order matters — what the wizard shows first is what most users should try.
-# Local-first (no key needed), then cloud tiers.
+# Local-first ordering: no-key providers surface before cloud tiers.
 _PROVIDER_OPTIONS: tuple[_ProviderOption, ...] = (
     _ProviderOption(
         value="ollama", label="Ollama",
@@ -128,10 +156,44 @@ _PROVIDER_OPTIONS: tuple[_ProviderOption, ...] = (
 )
 
 
-def _detect_available(prompter: Prompter) -> list[SelectOption]:
-    prompter.section("Detecting environment")
+_APPROVAL_OPTIONS: list[SelectOption] = [
+    SelectOption(
+        value="safe", label="safe",
+        hint="auto-ok read-only + low-risk tools, prompt on medium+",
+    ),
+    SelectOption(
+        value="medium", label="medium",
+        hint="also auto-ok medium-risk scanners (trivy, semgrep, bandit)",
+    ),
+    SelectOption(
+        value="all", label="all",
+        hint="auto-ok everything — only for sandboxes you own",
+    ),
+    SelectOption(
+        value="none", label="none",
+        hint="prompt before every tool call",
+    ),
+]
 
+
+@dataclass
+class _WizardState:
+    provider_result: ProviderSetupResult | None = None
+    engagement: str = "default"
+    approval_tier: str = "safe"
+    scanners_available: list[str] = field(default_factory=list)
+    scope_targets: list[str] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Stage helpers
+# ---------------------------------------------------------------------------
+
+
+def _detect_available(prompter: Prompter) -> tuple[list[SelectOption], list[bool]]:
+    prompter.section("Detecting environment")
     options: list[SelectOption] = []
+    present_flags: list[bool] = []
     for opt in _PROVIDER_OPTIONS:
         probe = opt.detector() if opt.detector else None
         present = bool(probe)
@@ -139,7 +201,8 @@ def _detect_available(prompter: Prompter) -> list[SelectOption]:
         prompter.status(present, opt.label, detail=detail or opt.base_hint)
         hint = opt.base_hint + (f" — {detail}" if present and detail else "")
         options.append(SelectOption(value=opt.value, label=opt.label, hint=hint))
-    return options
+        present_flags.append(present)
+    return options, present_flags
 
 
 def _run_provider_setup(prompter: Prompter, provider_id: str) -> ProviderSetupResult:
@@ -156,9 +219,9 @@ def _run_provider_setup(prompter: Prompter, provider_id: str) -> ProviderSetupRe
     raise ValueError(f"unknown provider: {provider_id}")
 
 
-async def _self_test(result: ProviderSetupResult) -> tuple[bool, str]:
+async def _self_test(provider_id: str, provider_config: dict[str, Any]) -> tuple[bool, str]:
     try:
-        provider = create_provider(result.provider_id, result.merged_config())
+        provider = create_provider(provider_id, provider_config)
         messages = [
             Message(role=Role.SYSTEM, content="You are K.O.D.A. self-test. Be terse."),
             Message(role=Role.USER, content="Reply with exactly one word: pong"),
@@ -170,6 +233,222 @@ async def _self_test(result: ProviderSetupResult) -> tuple[bool, str]:
         return True, text[:120] if text else "(empty response)"
     except Exception as exc:  # noqa: BLE001
         return False, f"{type(exc).__name__}: {exc}"
+
+
+def _risk_ack(prompter: Prompter) -> bool:
+    prompter.note(
+        "K.O.D.A. executes real security tools against real targets.\n"
+        "You are responsible for operating only inside engagements you\n"
+        "are authorized to touch. Every tool call is audited, grounded\n"
+        "against evidence, and redacted for credentials.",
+        title="Operator acknowledgement",
+    )
+
+    if os.environ.get("KODA_ACCEPT_RISK") == "1":
+        prompter.status(True, "risk accepted via KODA_ACCEPT_RISK=1")
+        return True
+
+    return prompter.confirm(
+        "I will only run K.O.D.A. against systems I own or am authorized to test",
+        default=False,
+    )
+
+
+def _welcome_back(
+    prompter: Prompter,
+    path: Path,
+) -> tuple[str, dict[str, Any]]:
+    """Return (action, existing_cfg). action ∈ {reconfigure, quick_self_test, cancel}."""
+    cfg = load_config(path)
+    provider_id = cfg.get("default_provider", "unknown")
+    engagement = cfg.get("engagement", {}).get("default", "default")
+
+    prompter.note(
+        f"path: {path}\n"
+        f"provider: {provider_id}\n"
+        f"engagement: {engagement}",
+        title="Existing config detected",
+    )
+
+    choice = prompter.select(
+        "What would you like to do?",
+        [
+            SelectOption("reconfigure", "reconfigure", "walk the full wizard again"),
+            SelectOption("quick_self_test", "quick self-test", "ping the current provider"),
+            SelectOption("cancel", "cancel", "leave config as-is"),
+        ],
+        initial=0,
+    )
+    return choice, cfg
+
+
+def _auto_pick_provider(
+    options: list[SelectOption],
+    present_flags: list[bool],
+) -> str:
+    for opt, present in zip(options, present_flags):
+        if present:
+            return opt.value
+    return options[0].value
+
+
+def _stage_engagement(prompter: Prompter, quick: bool) -> str:
+    if quick:
+        return "default"
+
+    prompter.section("Engagement")
+    prompter.note(
+        "An engagement is a named boundary. Sessions, credentials,\n"
+        "evidence, and audit logs are all scoped to it. Override at\n"
+        "runtime with KODA_ENGAGEMENT=<name> before `koda`.",
+        title="Scope",
+    )
+
+    def _validate(value: str) -> str | None:
+        if not _ENGAGEMENT_RE.match(value):
+            return "use lowercase a-z, 0-9, _ or - (1-32 chars, starts with a letter/digit)."
+        return None
+
+    name = prompter.text(
+        "Engagement name",
+        default="default",
+        validate=_validate,
+    )
+
+    try:
+        KODA_HOME.mkdir(parents=True, exist_ok=True)
+        ACTIVE_ENGAGEMENT_FILE.write_text(name + "\n", encoding="utf-8")
+        prompter.status(True, f"active engagement set to {name}")
+    except OSError as exc:
+        prompter.status(False, "could not write active_engagement file", detail=str(exc))
+
+    return name
+
+
+def _stage_approval(prompter: Prompter, quick: bool) -> str:
+    if quick:
+        return "safe"
+
+    prompter.section("Approval policy")
+    prompter.note(
+        "Risk tiers decide which tool calls auto-run vs prompt:\n"
+        "  safe    — read-only + low-risk auto-ok (default)\n"
+        "  medium  — also auto-ok medium-risk scanners\n"
+        "  all     — auto-ok everything (sandbox only)\n"
+        "  none    — prompt on every tool call",
+        title="Auto-approve",
+    )
+    return prompter.select("Auto-approve tier", _APPROVAL_OPTIONS, initial=0)
+
+
+def _stage_scanners(prompter: Prompter, quick: bool) -> list[str]:
+    prompter.section("Security scanners")
+
+    if quick:
+        installed = detect_installed_scanners()
+        return sorted(name for name, present in installed.items() if present)
+
+    with prompter.progress("probing installed scanners") as p:
+        installed = detect_installed_scanners()
+        p.stop(f"{sum(installed.values())}/{len(installed)} found")
+
+    available: list[str] = []
+    for name in sorted(installed):
+        present = installed[name]
+        detail = "installed" if present else _SCANNER_INSTALL_HINTS.get(name, "not installed")
+        prompter.status(present, name, detail=detail)
+        if present:
+            available.append(name)
+
+    total = len(installed)
+    prompter.note(
+        f"{len(available)} of {total} scanners detected.\n"
+        "K.O.D.A. only offers installed scanners to the model;\n"
+        "missing ones are silently unavailable until you install them.",
+        title="Scanner summary",
+    )
+    return available
+
+
+def _stage_scope(prompter: Prompter, quick: bool) -> list[str]:
+    if quick:
+        return []
+
+    prompter.section("Engagement scope")
+    prompter.note(
+        "Scope targets constrain where scanners run. Add hosts, URLs,\n"
+        "or repos you are authorized to touch — one per line, blank to\n"
+        "finish. Editable later in config.yaml.",
+        title="Targets",
+    )
+
+    if not prompter.confirm("Add scope targets now?", default=False):
+        return []
+
+    targets: list[str] = []
+    while len(targets) < _SCOPE_TARGET_CAP:
+        entry = prompter.text(
+            f"target #{len(targets) + 1}",
+            default="",
+            placeholder="blank to finish",
+        )
+        if not entry:
+            break
+        targets.append(entry)
+        prompter.status(True, f"added {entry}", detail=f"{len(targets)} total")
+
+    if len(targets) >= _SCOPE_TARGET_CAP:
+        prompter.status(False, f"scope cap reached ({_SCOPE_TARGET_CAP}) — edit config.yaml to add more")
+
+    return targets
+
+
+def _stage_provider(
+    prompter: Prompter,
+    quick: bool,
+) -> ProviderSetupResult:
+    options, present_flags = _detect_available(prompter)
+    if quick:
+        choice = _auto_pick_provider(options, present_flags)
+        prompter.status(True, f"quick-picked: {choice}")
+    else:
+        initial = next(
+            (idx for idx, flag in enumerate(present_flags) if flag),
+            0,
+        )
+        choice = prompter.select("Default provider", options, initial=initial)
+    return _run_provider_setup(prompter, choice)
+
+
+def _render_summary(
+    prompter: Prompter,
+    state: _WizardState,
+    path: Path,
+) -> None:
+    assert state.provider_result is not None
+    result = state.provider_result
+
+    scanners = state.scanners_available
+    if len(scanners) <= 6:
+        scanner_line = f"{len(scanners)} ({', '.join(scanners)})" if scanners else "0"
+    else:
+        scanner_line = f"{len(scanners)}"
+
+    prompter.note(
+        f"provider:    {result.provider_id} ({result.provider_label})\n"
+        f"model:       {result.model or '(provider default)'}\n"
+        f"engagement:  {state.engagement}\n"
+        f"approvals:   {state.approval_tier}\n"
+        f"scanners:    {scanner_line}\n"
+        f"scope:       {len(state.scope_targets)} target(s)\n"
+        f"config:      {path}",
+        title="Ready",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
 
 
 def run_setup_wizard(
@@ -184,38 +463,103 @@ def run_setup_wizard(
         f"First-run setup. Writes config to {path}",
     )
 
+    # Stage 1 — risk ack
+    if not _risk_ack(prompter):
+        prompter.outro("cancelled — setup aborted")
+        return {}
+
+    # Stage 2 — welcome-back branch
+    existing_action: str | None = None
+    existing_cfg: dict[str, Any] = {}
+    if path.exists():
+        try:
+            existing_action, existing_cfg = _welcome_back(prompter, path)
+        except WizardCancelled as exc:
+            prompter.outro(f"cancelled: {exc}")
+            return {}
+
+        if existing_action == "cancel":
+            prompter.outro("config left unchanged")
+            return existing_cfg
+
+        if existing_action == "quick_self_test":
+            provider_id = existing_cfg.get("default_provider", "")
+            provider_cfg = existing_cfg.get("provider", {}).get(provider_id, {})
+            if not provider_id or not provider_cfg:
+                prompter.note(
+                    "Existing config is missing provider details. Run reconfigure.",
+                    title="Self-test skipped",
+                )
+                prompter.outro("done")
+                return existing_cfg
+            with prompter.progress(f"pinging {provider_id}") as p:
+                ok, detail = asyncio.run(_self_test(provider_id, provider_cfg))
+                p.stop(detail if ok else f"failed: {detail}")
+            if not ok:
+                prompter.note(
+                    "Fix the provider and re-run `koda setup`.",
+                    title="Self-test failed",
+                )
+            prompter.outro("done")
+            return existing_cfg
+
+    # Stage 3–8 — full or quick walk
+    state = _WizardState()
+    quick = noninteractive
     try:
-        options = _detect_available(prompter)
-        choice = prompter.select(
-            "Default provider",
-            options,
-            initial=0,
-        )
-        result = _run_provider_setup(prompter, choice)
+        if not quick and path.exists() is False:
+            # First-time run: still offer the mode fork unless noninteractive.
+            mode = prompter.select(
+                "Setup mode",
+                [
+                    SelectOption("quick", "quick", "best-detected provider, sensible defaults"),
+                    SelectOption("full", "full", "walk every stage"),
+                ],
+                initial=0,
+            )
+            quick = mode == "quick"
+        elif not quick:
+            # Reconfigure path — always full walk.
+            quick = False
+
+        state.provider_result = _stage_provider(prompter, quick)
+        state.engagement = _stage_engagement(prompter, quick)
+        state.approval_tier = _stage_approval(prompter, quick)
+        state.scanners_available = _stage_scanners(prompter, quick)
+        state.scope_targets = _stage_scope(prompter, quick)
     except WizardCancelled as exc:
         prompter.outro(f"cancelled: {exc}")
         return {}
 
+    # Stage 9 — persist, self-test, launch
+    assert state.provider_result is not None
+    result = state.provider_result
+
     KODA_HOME.mkdir(parents=True, exist_ok=True)
     if result.secrets:
         save_secrets(result.secrets, SECRETS_PATH)
-        for key in result.secrets:
-            os.environ.setdefault(key, result.secrets[key])
+        for key, value in result.secrets.items():
+            os.environ.setdefault(key, value)
         prompter.status(True, f"saved secrets to {SECRETS_PATH}")
 
     config: dict[str, Any] = {
         "version": 1,
         "default_provider": result.provider_id,
         "provider": {result.provider_id: result.merged_config()},
-        "approvals": {"auto_approve": "safe"},
+        "approvals": {"auto_approve": state.approval_tier},
         "session": {"db_path": str(KODA_HOME / "sessions.db")},
+        "engagement": {"default": state.engagement},
+        "scope": {
+            "targets": list(state.scope_targets),
+            "scanners_available": list(state.scanners_available),
+        },
     }
     save_config(config, path)
     prompter.status(True, f"wrote {path}")
 
     if prompter.confirm("Run a self-test against the chosen provider?", default=True):
         with prompter.progress(f"pinging {result.provider_id}") as p:
-            ok, detail = asyncio.run(_self_test(result))
+            ok, detail = asyncio.run(_self_test(result.provider_id, result.merged_config()))
             p.stop(detail if ok else f"failed: {detail}")
         if not ok:
             prompter.note(
@@ -223,6 +567,7 @@ def run_setup_wizard(
                 title="Self-test failed",
             )
 
+    _render_summary(prompter, state, path)
     prompter.outro("ready — start with: koda")
     return config
 
