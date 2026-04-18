@@ -10,7 +10,9 @@ import os
 import shutil
 import sys
 
-from ..agents import AgentSpec, agent_exists, list_agents, scaffold_agent, validate_name
+from ..agents import AgentSpec, agent_exists, list_agents, run_agent, scaffold_agent, validate_name
+
+DEFAULT_AGENT_NAME = "koda"
 
 _CATEGORIES = [
     ("fs", "filesystem — list/read files"),
@@ -35,7 +37,7 @@ _DEFAULT_MODELS = {
 def _banner(name: str) -> None:
     print()
     print("  K.O.D.A. — new agent scaffold")
-    print(f"  name: {name}  (fixed — cannot be changed later)")
+    print(f"  name: {name}")
     print()
 
 
@@ -192,14 +194,36 @@ def _cmd_agents(argv: list[str]) -> int:
 
 
 def cmd_new(argv: list[str]) -> int:
-    if not argv or argv[0] in {"-h", "--help"}:
-        print("usage: koda new <agent-name>")
-        print("  scaffolds a standalone agent under ~/.koda/agents/<name>/")
-        print("  name rules: ^[a-z][a-z0-9_-]{1,31}$ — fixed at creation, no rename.")
+    if argv and argv[0] in {"-h", "--help"}:
+        print("usage: koda new [<agent-name>]")
+        print(f"  scaffolds a standalone agent under ~/.koda/agents/<name>/")
+        print(f"  default name: {DEFAULT_AGENT_NAME!r} — override by passing a name.")
+        print(r"  name rules: ^[a-z][a-z0-9_-]{1,31}$  (rename not supported).")
         return 0
-    name = argv[0]
+    name = argv[0] if argv else DEFAULT_AGENT_NAME
     return _run_wizard(name)
 
 
 def cmd_agents(argv: list[str]) -> int:
     return _cmd_agents(argv)
+
+
+def cmd_run(argv: list[str]) -> int:
+    if not argv or argv[0] in {"-h", "--help"}:
+        agents = list_agents()
+        print("usage: koda run <agent-name>")
+        print("  boots the agent's OpenClaw-style harness with per-agent memory + tools.")
+        if agents:
+            print(f"  available: {', '.join(agents)}")
+        else:
+            print("  no agents scaffolded yet. create one with: koda new")
+        return 0
+    name = argv[0]
+    try:
+        return run_agent(name)
+    except FileNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except (ValueError, TypeError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2

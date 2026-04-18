@@ -130,7 +130,8 @@ def main(argv: list[str] | None = None) -> int:
         print("       koda setup         re-run the setup wizard")
         print("       koda doctor        show config + provider status")
         print("       koda mcp           start MCP server (expose tools to other agents)")
-        print("       koda new <name>    scaffold a standalone agent (OpenClaw-style)")
+        print("       koda new [<name>]  scaffold a standalone agent (default name: koda)")
+        print("       koda run <name>    boot a scaffolded agent's harness")
         print("       koda agents list   list scaffolded agents")
         print("       koda --help        show this message")
         print("env: KODA_PROVIDER (anthropic|claude_cli|ollama), KODA_MODEL, ANTHROPIC_API_KEY, KODA_HOME")
@@ -147,6 +148,9 @@ def main(argv: list[str] | None = None) -> int:
     if argv and argv[0] == "new":
         from .new_agent import cmd_new
         return cmd_new(argv[1:])
+    if argv and argv[0] == "run":
+        from .new_agent import cmd_run
+        return cmd_run(argv[1:])
     if argv and argv[0] == "agents":
         from .new_agent import cmd_agents
         return cmd_agents(argv[1:])
