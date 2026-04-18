@@ -22,6 +22,7 @@ from typing import Any
 
 from ..adapters.base import Message, Provider, Role, ToolCall
 from ..audit import AuditLogger, NullAuditLogger, hash_arguments
+from ..auth import CredentialBroker, NullCredentialBroker
 from ..evidence import EvidenceStore, NullEvidenceStore
 from ..security.prompts import build_security_prompt
 from ..security.verifier import format_rejection, verify_draft
@@ -76,6 +77,7 @@ class TurnLoop:
         engagement: str = "",
         audit: AuditLogger | NullAuditLogger | None = None,
         evidence: EvidenceStore | NullEvidenceStore | None = None,
+        credentials: CredentialBroker | NullCredentialBroker | None = None,
     ) -> None:
         self.provider = provider
         self.registry = registry
@@ -85,6 +87,7 @@ class TurnLoop:
         self.engagement = engagement
         self.audit = audit or NullAuditLogger()
         self.evidence = evidence or NullEvidenceStore()
+        self.credentials = credentials or NullCredentialBroker()
 
     def _build_messages(self, extra_system_prompt: str) -> list[Message]:
         system = Message(role=Role.SYSTEM, content=build_security_prompt(extra_system_prompt))
@@ -112,6 +115,15 @@ class TurnLoop:
             result = await self.registry.invoke(tc.name, tc.arguments)
         latency_ms = int((time.perf_counter() - t0) * 1000)
         trace.tool_calls_made += 1
+        # Scrub known credential values before the output enters the
+        # session transcript, evidence store, or any audit context.
+        safe_content = self.credentials.redact(result.content)
+        if safe_content != result.content:
+            result = ToolResult(
+                content=safe_content,
+                is_error=result.is_error,
+                metadata=result.metadata,
+            )
         rendered = f"[tool_result {tc.name}]\n{result.content}"
         trace.tool_transcript.append(rendered)
 
