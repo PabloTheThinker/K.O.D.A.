@@ -167,7 +167,11 @@ fetch_source() {
         git fetch origin 2>/dev/null
         git checkout "$BRANCH" 2>/dev/null
         git pull --ff-only origin "$BRANCH" 2>/dev/null || git reset --hard "origin/$BRANCH"
-        ok "Source updated"
+        # Nuke untracked crud (stale __pycache__, deleted-but-not-gitignored
+        # layout leftovers). Past layout changes left `koda/config/` as an
+        # untracked dir that got packaged over `config.py` in the wheel.
+        git clean -fdx -e ".venv" 2>/dev/null || true
+        ok "Source updated (working tree clean)"
     else
         info "Downloading K.O.D.A...."
         mkdir -p "$INSTALL_DIR"
@@ -197,14 +201,15 @@ install_koda() {
     info "Installing K.O.D.A...."
     export VIRTUAL_ENV="$VENV_DIR"
 
-    # Stream real errors — debugging an unhappy install was impossible
-    # when stderr went to /dev/null.
-    if ! $UV_CMD pip install "$SOURCE_DIR"; then
+    # --reinstall + --no-cache so we always rebuild from .source and don't
+    # reuse a stale wheel from a previous (possibly broken) layout. Stream
+    # real errors — debugging a silent install was impossible.
+    if ! $UV_CMD pip install --reinstall --no-cache "$SOURCE_DIR"; then
         warn "First install attempt failed \u2014 retrying against a fresh venv..."
         rm -rf "$VENV_DIR"
         $UV_CMD venv "$VENV_DIR" --python "$MIN_PYTHON" --quiet
         export VIRTUAL_ENV="$VENV_DIR"
-        if ! $UV_CMD pip install "$SOURCE_DIR"; then
+        if ! $UV_CMD pip install --reinstall --no-cache "$SOURCE_DIR"; then
             fail "Installation failed. See errors above."
         fi
     fi
