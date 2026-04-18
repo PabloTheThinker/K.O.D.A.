@@ -130,6 +130,8 @@ def main(argv: list[str] | None = None) -> int:
         print("       koda setup         re-run the setup wizard")
         print("       koda doctor        show config + provider status")
         print("       koda mcp           start MCP server (expose tools to other agents)")
+        print("       koda new <name>    scaffold a standalone agent (OpenClaw-style)")
+        print("       koda agents list   list scaffolded agents")
         print("       koda --help        show this message")
         print("env: KODA_PROVIDER (anthropic|claude_cli|ollama), KODA_MODEL, ANTHROPIC_API_KEY, KODA_HOME")
         return 0
@@ -142,6 +144,12 @@ def main(argv: list[str] | None = None) -> int:
     if argv and argv[0] == "mcp":
         from ..mcp.server import main as mcp_main
         return mcp_main(argv[1:])
+    if argv and argv[0] == "new":
+        from .new_agent import cmd_new
+        return cmd_new(argv[1:])
+    if argv and argv[0] == "agents":
+        from .new_agent import cmd_agents
+        return cmd_agents(argv[1:])
     return asyncio.run(_repl())
 
 
