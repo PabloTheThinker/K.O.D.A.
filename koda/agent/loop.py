@@ -71,12 +71,14 @@ class TurnLoop:
         approvals: ApprovalPolicy,
         session: SessionStore,
         session_id: str,
+        engagement: str = "",
     ) -> None:
         self.provider = provider
         self.registry = registry
         self.approvals = approvals
         self.session = session
         self.session_id = session_id
+        self.engagement = engagement
 
     def _build_messages(self, extra_system_prompt: str) -> list[Message]:
         system = Message(role=Role.SYSTEM, content=build_security_prompt(extra_system_prompt))
@@ -85,10 +87,21 @@ class TurnLoop:
     async def _run_tool_call(self, tc: ToolCall, trace: TurnTrace) -> Message:
         tool = self.registry.get(tc.name)
         risk = tool.risk if tool else RiskLevel.SENSITIVE
-        approved = await self.approvals.decide(ApprovalRequest(tool_name=tc.name, arguments=tc.arguments, risk=risk))
+        request = ApprovalRequest(
+            tool_name=tc.name,
+            arguments=tc.arguments,
+            risk=risk,
+            engagement=self.engagement,
+        )
+        decision = await self.approvals.decide_full(request)
         t0 = time.perf_counter()
-        if not approved:
-            result = ToolResult(content=f"Tool '{tc.name}' was denied by the approval policy.", is_error=True)
+        if not decision.allowed:
+            reason = decision.reason or "refused by approval policy"
+            rule = f" [rule={decision.matched_rule}]" if decision.matched_rule else ""
+            result = ToolResult(
+                content=f"Tool '{tc.name}' refused: {reason}{rule}",
+                is_error=True,
+            )
         else:
             result = await self.registry.invoke(tc.name, tc.arguments)
         latency_ms = int((time.perf_counter() - t0) * 1000)
@@ -102,7 +115,10 @@ class TurnLoop:
             metadata={
                 "tool_name": tc.name,
                 "is_error": result.is_error,
-                "approved": approved,
+                "approved": decision.allowed,
+                "approval_stage": decision.stage,
+                "approval_reason": decision.reason,
+                "approval_rule": decision.matched_rule,
                 "latency_ms": latency_ms,
             },
         )
