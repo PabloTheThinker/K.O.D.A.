@@ -139,7 +139,10 @@ def _pick_provider_auto() -> tuple[str, dict]:
 async def _repl() -> int:
     from ..adapters import create_provider
     from ..agent.loop import TurnLoop, TurnOptions
+    from ..audit import AuditLogger
+    from ..auth import CredentialBroker
     from ..config import KODA_HOME, config_exists, load_config
+    from ..evidence import EvidenceStore
     from ..profiles import read_active_profile, seed_default_soul
     from ..session.store import SessionStore
     from ..tools import builtins as _builtins  # noqa: F401 — registers tools
@@ -161,12 +164,23 @@ async def _repl() -> int:
     provider_name, provider_cfg = _pick_provider_from_config(config)
     provider = create_provider(provider_name, provider_cfg)
     registry = global_registry()
+
+    active = read_active_profile()
+    profile_label = active or "default"
+    engagement = os.environ.get("KODA_ENGAGEMENT", "").strip() or "default"
+
+    audit = AuditLogger(profile=profile_label)
+    evidence = EvidenceStore()
+    credentials = CredentialBroker(audit=audit)
+
     approvals = ApprovalPolicy(
         approvals_path=KODA_HOME / "approvals.json",
         auto_approve_threshold=RiskLevel.SAFE,
+        audit=audit,
     )
     session = SessionStore(KODA_HOME / "sessions.db")
-    session_id = session.create(title="interactive")
+    session_id = session.create(title="interactive", engagement=engagement)
+    audit.emit("session.open", session_id=session_id, engagement=engagement, profile=profile_label)
 
     loop = TurnLoop(
         provider=provider,
@@ -174,17 +188,19 @@ async def _repl() -> int:
         approvals=approvals,
         session=session,
         session_id=session_id,
+        engagement=engagement,
+        audit=audit,
+        evidence=evidence,
+        credentials=credentials,
     )
 
-    active = read_active_profile()
-    profile_label = active or ("default" if os.environ.get("KODA_HOME") else "default")
-
     print(_BANNER)
-    print(f"profile:  {profile_label}")
-    print(f"home:     {KODA_HOME}")
-    print(f"provider: {provider_name}   model: {provider.get_model()}")
-    print(f"tools:    {', '.join(registry.names())}")
-    print(f"session:  {session_id}")
+    print(f"profile:    {profile_label}")
+    print(f"engagement: {engagement}")
+    print(f"home:       {KODA_HOME}")
+    print(f"provider:   {provider_name}   model: {provider.get_model()}")
+    print(f"tools:      {', '.join(registry.names())}")
+    print(f"session:    {session_id}")
     print("type a question, or /exit to quit.\n")
 
     while True:
@@ -192,10 +208,14 @@ async def _repl() -> int:
             prompt = input("> ").strip()
         except (EOFError, KeyboardInterrupt):
             print()
+            audit.emit("session.close", session_id=session_id, engagement=engagement)
+            audit.close()
             return 0
         if not prompt:
             continue
         if prompt in {"/exit", "/quit", "/q"}:
+            audit.emit("session.close", session_id=session_id, engagement=engagement)
+            audit.close()
             return 0
         if prompt in {"/setup", "/wizard"}:
             run_setup_wizard()
