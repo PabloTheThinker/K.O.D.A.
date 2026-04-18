@@ -61,9 +61,58 @@ class ProviderSetupResult:
 
 # --- Detection helpers ---
 
+def _first_env(*names: str) -> str | None:
+    for n in names:
+        val = os.environ.get(n, "").strip()
+        if val:
+            return val
+    return None
+
+
 def detect_anthropic_env_key() -> str | None:
-    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    return key or None
+    return _first_env("ANTHROPIC_API_KEY")
+
+
+def detect_openai_env_key() -> str | None:
+    return _first_env("OPENAI_API_KEY")
+
+
+def detect_groq_env_key() -> str | None:
+    return _first_env("GROQ_API_KEY")
+
+
+def detect_together_env_key() -> str | None:
+    return _first_env("TOGETHER_API_KEY")
+
+
+def detect_openrouter_env_key() -> str | None:
+    return _first_env("OPENROUTER_API_KEY")
+
+
+def detect_deepseek_env_key() -> str | None:
+    return _first_env("DEEPSEEK_API_KEY")
+
+
+def detect_xai_env_key() -> str | None:
+    return _first_env("XAI_API_KEY", "GROK_API_KEY")
+
+
+def detect_mistral_env_key() -> str | None:
+    return _first_env("MISTRAL_API_KEY")
+
+
+def detect_gemini_env_key() -> str | None:
+    from pathlib import Path
+    key = _first_env("GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENAI_API_KEY")
+    if key:
+        return key
+    fallback = Path.home() / ".config" / "gcloud" / "api-key.txt"
+    if fallback.is_file():
+        try:
+            return fallback.read_text(encoding="utf-8").strip() or None
+        except OSError:
+            return None
+    return None
 
 
 def detect_claude_cli() -> str | None:
@@ -339,14 +388,236 @@ def setup_ollama(
     )
 
 
+# ---------------------------------------------------------------------------
+# OpenAI-compatible provider setup (OpenAI, Groq, Together, OpenRouter,
+# DeepSeek, xAI/Grok, Mistral, Fireworks, Cerebras, Perplexity, vLLM)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _OpenAICompatSpec:
+    provider_id: str
+    label: str
+    env_key: str
+    key_hint_prefix: str          # e.g. "sk-", "gsk_", "tgp_", "sk-or-"
+    min_key_len: int
+    default_models: tuple[tuple[str, str], ...]  # (model_id, hint)
+    detector: Any = None          # callable → Optional[str]
+
+
+_OPENAI_SPECS: dict[str, _OpenAICompatSpec] = {
+    "openai": _OpenAICompatSpec(
+        provider_id="openai",
+        label="OpenAI",
+        env_key="OPENAI_API_KEY",
+        key_hint_prefix="sk-",
+        min_key_len=30,
+        default_models=(
+            ("gpt-4o", "flagship multimodal"),
+            ("gpt-4o-mini", "fast, cheap"),
+            ("o1-mini", "reasoning-tuned"),
+            ("gpt-4-turbo", "legacy flagship"),
+        ),
+        detector=detect_openai_env_key,
+    ),
+    "groq": _OpenAICompatSpec(
+        provider_id="groq",
+        label="Groq",
+        env_key="GROQ_API_KEY",
+        key_hint_prefix="gsk_",
+        min_key_len=20,
+        default_models=(
+            ("llama-3.3-70b-versatile", "Meta Llama 3.3 70B"),
+            ("llama-3.1-8b-instant", "Meta Llama 3.1 8B — fast"),
+            ("mixtral-8x7b-32768", "Mixtral 32k ctx"),
+            ("qwen-2.5-32b", "Qwen 2.5 32B"),
+        ),
+        detector=detect_groq_env_key,
+    ),
+    "together": _OpenAICompatSpec(
+        provider_id="together",
+        label="Together AI",
+        env_key="TOGETHER_API_KEY",
+        key_hint_prefix="",
+        min_key_len=30,
+        default_models=(
+            ("meta-llama/Llama-3.3-70B-Instruct-Turbo", "Llama 3.3 70B"),
+            ("deepseek-ai/DeepSeek-V3", "DeepSeek V3"),
+            ("Qwen/Qwen2.5-Coder-32B-Instruct", "Qwen 2.5 Coder 32B"),
+        ),
+        detector=detect_together_env_key,
+    ),
+    "openrouter": _OpenAICompatSpec(
+        provider_id="openrouter",
+        label="OpenRouter",
+        env_key="OPENROUTER_API_KEY",
+        key_hint_prefix="sk-or-",
+        min_key_len=30,
+        default_models=(
+            ("anthropic/claude-sonnet-4", "Claude Sonnet 4 via OpenRouter"),
+            ("openai/gpt-4o", "GPT-4o via OpenRouter"),
+            ("google/gemini-2.5-flash", "Gemini 2.5 Flash"),
+            ("meta-llama/llama-3.3-70b-instruct", "Llama 3.3 70B"),
+        ),
+        detector=detect_openrouter_env_key,
+    ),
+    "deepseek": _OpenAICompatSpec(
+        provider_id="deepseek",
+        label="DeepSeek",
+        env_key="DEEPSEEK_API_KEY",
+        key_hint_prefix="sk-",
+        min_key_len=30,
+        default_models=(
+            ("deepseek-chat", "general chat (V3)"),
+            ("deepseek-reasoner", "reasoning (R1)"),
+        ),
+        detector=detect_deepseek_env_key,
+    ),
+    "xai": _OpenAICompatSpec(
+        provider_id="xai",
+        label="xAI (Grok)",
+        env_key="XAI_API_KEY",
+        key_hint_prefix="xai-",
+        min_key_len=30,
+        default_models=(
+            ("grok-2-latest", "Grok 2"),
+            ("grok-2-mini", "Grok 2 Mini"),
+        ),
+        detector=detect_xai_env_key,
+    ),
+    "mistral": _OpenAICompatSpec(
+        provider_id="mistral",
+        label="Mistral",
+        env_key="MISTRAL_API_KEY",
+        key_hint_prefix="",
+        min_key_len=20,
+        default_models=(
+            ("mistral-large-latest", "Mistral Large"),
+            ("mistral-small-latest", "Mistral Small"),
+            ("codestral-latest", "Codestral — code-specialized"),
+        ),
+        detector=detect_mistral_env_key,
+    ),
+}
+
+
+def setup_openai_compat(
+    prompter: Prompter,
+    provider_id: str,
+    *,
+    existing_key: str | None = None,
+) -> ProviderSetupResult:
+    """Unified wizard for OpenAI-compatible providers.
+
+    Dispatches on provider_id into the spec table; same flow for all:
+    detect key → capture key → pick model → configure quota.
+    """
+    spec = _OPENAI_SPECS.get(provider_id)
+    if spec is None:
+        raise ValueError(f"unknown OpenAI-compatible provider: {provider_id}")
+
+    prompter.section(spec.label)
+    key = existing_key or (spec.detector() if spec.detector else None) or ""
+    if key:
+        prompter.status(True, f"API key detected from {spec.env_key}")
+    else:
+        prompter.note(
+            f"Paste your {spec.label} API key. It's stored at "
+            f"~/.koda/secrets.env (0600) and never written to config.yaml.",
+            title="API key",
+        )
+        key = prompter.password(
+            f"{spec.label} API key",
+            validate=_validate_api_key(spec.key_hint_prefix, min_len=spec.min_key_len),
+        )
+
+    options = [SelectOption(value=m[0], label=m[0], hint=m[1]) for m in spec.default_models]
+    options.append(SelectOption(value="__custom__", label="custom model id…", hint="type your own"))
+    picked = prompter.select("Default model", options, initial=0)
+    if picked == "__custom__":
+        picked = prompter.text(
+            "Model id",
+            placeholder=spec.default_models[0][0] if spec.default_models else "",
+        )
+
+    quota = _configure_quota(prompter, scope_label=spec.label)
+
+    secrets: dict[str, str] = {}
+    if key and key != existing_key:
+        secrets[spec.env_key] = key
+
+    return ProviderSetupResult(
+        provider_id=spec.provider_id,
+        provider_label=spec.label,
+        model=picked,
+        config={"provider_name": spec.provider_id},
+        secrets=secrets,
+        quota=quota,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Gemini setup
+# ---------------------------------------------------------------------------
+
+_GEMINI_MODELS = [
+    SelectOption(value="gemini-2.5-flash", label="gemini-2.5-flash", hint="fast, 1M context"),
+    SelectOption(value="gemini-2.5-pro", label="gemini-2.5-pro", hint="most capable"),
+    SelectOption(value="gemini-2.0-flash", label="gemini-2.0-flash", hint="prior-gen fast"),
+    SelectOption(value="gemini-2.0-flash-exp-image-generation", label="2.0 flash image-gen", hint="native image output"),
+]
+
+
+def setup_gemini(prompter: Prompter, *, existing_key: str | None = None) -> ProviderSetupResult:
+    prompter.section("Google Gemini")
+
+    key = existing_key or detect_gemini_env_key() or ""
+    if key:
+        prompter.status(True, "Gemini API key detected")
+    else:
+        prompter.note(
+            "Paste your Gemini API key (from aistudio.google.com/app/apikey).\n"
+            "Stored at ~/.koda/secrets.env (0600).",
+            title="API key",
+        )
+        key = prompter.password(
+            "Gemini API key",
+            validate=_validate_api_key("AI", min_len=30),
+        )
+
+    model = prompter.select("Default model", _GEMINI_MODELS, initial=0)
+    quota = _configure_quota(prompter, scope_label="Gemini")
+
+    secrets = {"GEMINI_API_KEY": key} if key and key != existing_key else {}
+
+    return ProviderSetupResult(
+        provider_id="gemini",
+        provider_label="Google Gemini",
+        model=model,
+        config={},
+        secrets=secrets,
+        quota=quota,
+    )
+
+
 __all__ = [
     "QuotaSpec",
     "ProviderSetupResult",
     "detect_anthropic_env_key",
+    "detect_openai_env_key",
+    "detect_groq_env_key",
+    "detect_together_env_key",
+    "detect_openrouter_env_key",
+    "detect_deepseek_env_key",
+    "detect_xai_env_key",
+    "detect_mistral_env_key",
+    "detect_gemini_env_key",
     "detect_claude_cli",
     "detect_ollama_models",
     "setup_anthropic",
     "setup_claude_cli",
     "setup_ollama",
+    "setup_openai_compat",
+    "setup_gemini",
     "WizardCancelled",
 ]

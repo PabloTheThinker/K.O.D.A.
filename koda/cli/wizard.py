@@ -4,13 +4,18 @@ Uses the shared wizard primitives (Prompter, per-provider setup). Detects
 providers, captures API keys (persisted to ~/.koda/secrets.env, chmod 600),
 picks a model, optionally configures quota, writes ~/.koda/config.yaml,
 and runs a one-shot self-test.
+
+Koda is a harness — it mounts on any engine. The wizard reflects that:
+local-first (Ollama, Claude CLI), then the Anthropic / OpenAI /
+Google / xAI / Groq / Together / OpenRouter / DeepSeek / Mistral tier.
 """
 from __future__ import annotations
 
 import asyncio
 import os
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from ..adapters import create_provider
 from ..adapters.base import Message, Role
@@ -22,46 +27,118 @@ from ..wizard import (
     WizardCancelled,
     detect_anthropic_env_key,
     detect_claude_cli,
+    detect_deepseek_env_key,
+    detect_gemini_env_key,
+    detect_groq_env_key,
+    detect_mistral_env_key,
     detect_ollama_models,
+    detect_openai_env_key,
+    detect_openrouter_env_key,
+    detect_together_env_key,
+    detect_xai_env_key,
     save_secrets,
     setup_anthropic,
     setup_claude_cli,
+    setup_gemini,
     setup_ollama,
+    setup_openai_compat,
 )
 
 SECRETS_PATH = KODA_HOME / "secrets.env"
 
 
+@dataclass(frozen=True)
+class _ProviderOption:
+    value: str
+    label: str
+    base_hint: str
+    detector: Callable[[], Any] | None  # returns truthy if reachable/configured
+    detail_fn: Callable[[Any], str] | None = None
+
+
+# Order matters — what the wizard shows first is what most users should try.
+# Local-first (no key needed), then cloud tiers.
+_PROVIDER_OPTIONS: tuple[_ProviderOption, ...] = (
+    _ProviderOption(
+        value="ollama", label="Ollama",
+        base_hint="local models, no API key",
+        detector=detect_ollama_models,
+        detail_fn=lambda v: f"{len(v)} model(s) available" if v else "not reachable",
+    ),
+    _ProviderOption(
+        value="claude_cli", label="Claude CLI",
+        base_hint="local subprocess — reuses your `claude` auth",
+        detector=detect_claude_cli,
+        detail_fn=lambda v: v or "not installed",
+    ),
+    _ProviderOption(
+        value="anthropic", label="Anthropic (Claude)",
+        base_hint="API — ANTHROPIC_API_KEY",
+        detector=detect_anthropic_env_key,
+        detail_fn=lambda v: "key detected" if v else "no key",
+    ),
+    _ProviderOption(
+        value="openai", label="OpenAI",
+        base_hint="API — OPENAI_API_KEY",
+        detector=detect_openai_env_key,
+        detail_fn=lambda v: "key detected" if v else "no key",
+    ),
+    _ProviderOption(
+        value="gemini", label="Google Gemini",
+        base_hint="API — GEMINI_API_KEY",
+        detector=detect_gemini_env_key,
+        detail_fn=lambda v: "key detected" if v else "no key",
+    ),
+    _ProviderOption(
+        value="groq", label="Groq",
+        base_hint="API — GROQ_API_KEY, fastest inference",
+        detector=detect_groq_env_key,
+        detail_fn=lambda v: "key detected" if v else "no key",
+    ),
+    _ProviderOption(
+        value="together", label="Together AI",
+        base_hint="API — TOGETHER_API_KEY",
+        detector=detect_together_env_key,
+        detail_fn=lambda v: "key detected" if v else "no key",
+    ),
+    _ProviderOption(
+        value="openrouter", label="OpenRouter",
+        base_hint="API — OPENROUTER_API_KEY, many models",
+        detector=detect_openrouter_env_key,
+        detail_fn=lambda v: "key detected" if v else "no key",
+    ),
+    _ProviderOption(
+        value="deepseek", label="DeepSeek",
+        base_hint="API — DEEPSEEK_API_KEY",
+        detector=detect_deepseek_env_key,
+        detail_fn=lambda v: "key detected" if v else "no key",
+    ),
+    _ProviderOption(
+        value="xai", label="xAI (Grok)",
+        base_hint="API — XAI_API_KEY",
+        detector=detect_xai_env_key,
+        detail_fn=lambda v: "key detected" if v else "no key",
+    ),
+    _ProviderOption(
+        value="mistral", label="Mistral",
+        base_hint="API — MISTRAL_API_KEY",
+        detector=detect_mistral_env_key,
+        detail_fn=lambda v: "key detected" if v else "no key",
+    ),
+)
+
+
 def _detect_available(prompter: Prompter) -> list[SelectOption]:
-    options: list[SelectOption] = []
-
-    env_key = detect_anthropic_env_key()
-    claude = detect_claude_cli()
-    ollama = detect_ollama_models()
-
     prompter.section("Detecting environment")
-    prompter.status(bool(env_key), "ANTHROPIC_API_KEY",
-                    detail="present" if env_key else "not set")
-    prompter.status(bool(claude), "Claude CLI",
-                    detail=claude or "not found")
-    prompter.status(bool(ollama), "Ollama",
-                    detail=f"{len(ollama)} model(s)" if ollama else "not reachable")
 
-    options.append(SelectOption(
-        value="anthropic",
-        label="Anthropic (Claude)",
-        hint="API — needs ANTHROPIC_API_KEY" + (" (detected)" if env_key else ""),
-    ))
-    options.append(SelectOption(
-        value="claude_cli",
-        label="Claude CLI",
-        hint="local subprocess" + (f" ({claude})" if claude else " — not installed"),
-    ))
-    options.append(SelectOption(
-        value="ollama",
-        label="Ollama",
-        hint="local models" + (f" — {len(ollama)} available" if ollama else " — not running"),
-    ))
+    options: list[SelectOption] = []
+    for opt in _PROVIDER_OPTIONS:
+        probe = opt.detector() if opt.detector else None
+        present = bool(probe)
+        detail = opt.detail_fn(probe) if opt.detail_fn else ""
+        prompter.status(present, opt.label, detail=detail or opt.base_hint)
+        hint = opt.base_hint + (f" — {detail}" if present and detail else "")
+        options.append(SelectOption(value=opt.value, label=opt.label, hint=hint))
     return options
 
 
@@ -72,6 +149,10 @@ def _run_provider_setup(prompter: Prompter, provider_id: str) -> ProviderSetupRe
         return setup_claude_cli(prompter)
     if provider_id == "ollama":
         return setup_ollama(prompter)
+    if provider_id == "gemini":
+        return setup_gemini(prompter, existing_key=detect_gemini_env_key())
+    if provider_id in {"openai", "groq", "together", "openrouter", "deepseek", "xai", "mistral"}:
+        return setup_openai_compat(prompter, provider_id)
     raise ValueError(f"unknown provider: {provider_id}")
 
 
@@ -83,6 +164,8 @@ async def _self_test(result: ProviderSetupResult) -> tuple[bool, str]:
             Message(role=Role.USER, content="Reply with exactly one word: pong"),
         ]
         resp = await provider.chat(messages)
+        if resp.stop_reason == "error":
+            return False, resp.text[:200]
         text = (resp.text or "").strip()
         return True, text[:120] if text else "(empty response)"
     except Exception as exc:  # noqa: BLE001
