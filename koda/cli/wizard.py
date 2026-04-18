@@ -78,10 +78,11 @@ def _run_provider_setup(prompter: Prompter, provider_id: str) -> ProviderSetupRe
 async def _self_test(result: ProviderSetupResult) -> tuple[bool, str]:
     try:
         provider = create_provider(result.provider_id, result.merged_config())
-        resp = await provider.complete(
-            messages=[Message(role=Role.USER, content="Reply with exactly one word: pong")],
-            system="You are K.O.D.A. self-test. Be terse.",
-        )
+        messages = [
+            Message(role=Role.SYSTEM, content="You are K.O.D.A. self-test. Be terse."),
+            Message(role=Role.USER, content="Reply with exactly one word: pong"),
+        ]
+        resp = await provider.chat(messages)
         text = (resp.text or "").strip()
         return True, text[:120] if text else "(empty response)"
     except Exception as exc:  # noqa: BLE001

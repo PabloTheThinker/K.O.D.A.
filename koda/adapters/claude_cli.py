@@ -1,12 +1,23 @@
-"""Claude CLI shell-out adapter. Uses the user's locally installed `claude` binary via JSON stream."""
+"""Claude CLI shell-out adapter. Uses the user's locally installed `claude` binary via JSON stream.
+
+Tool-use is not forwarded: the CLI's non-interactive ``--print`` mode
+takes a single prompt and returns a single text response, with no
+structured channel to declare tools or emit tool_use blocks. Callers
+who pass tools will see a warning logged once per process; for full
+tool orchestration, use the API or OpenAI-compatible adapters.
+"""
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import shutil
 from typing import Any
 
 from .base import Message, Provider, ProviderResponse, Role, ToolCall, ToolChoice, ToolSpec
+
+_log = logging.getLogger(__name__)
+_warned_once: bool = False
 
 
 def _sanitize(name: str) -> str:
@@ -43,6 +54,9 @@ class ClaudeCLIProvider(Provider):
     don't need to provide an API key to run K.O.D.A. The binary carries its own
     auth and quota. Requires `claude` on PATH.
     """
+
+    # Declared capability; TurnLoop / wizards can gate tool-bearing calls.
+    supports_tools: bool = False
 
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
@@ -98,5 +112,14 @@ class ClaudeCLIProvider(Provider):
         except json.JSONDecodeError:
             pass
 
-        _ = tools, tool_choice  # Tool calls aren't forwarded through CLI mode yet.
+        global _warned_once
+        if tools and not _warned_once:
+            _log.warning(
+                "claude_cli adapter received %d tool spec(s); CLI mode does not "
+                "support tool-use. The model will reply in text only. Switch to "
+                "the anthropic-api adapter for tool calling.",
+                len(tools),
+            )
+            _warned_once = True
+        _ = tool_choice
         return ProviderResponse(text=text, raw=raw_json, stop_reason="end_turn")

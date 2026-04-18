@@ -1,7 +1,16 @@
-"""Ollama adapter. Talks to a local Ollama server via its OpenAI-compatible chat endpoint."""
+"""Ollama adapter. Talks to a local Ollama server via its OpenAI-compatible chat endpoint.
+
+Tool-calling on Ollama is only reliable on models with function-calling
+fine-tuning. We maintain a conservative prefix allowlist of known-good
+families (Qwen 2.5+, Llama 3.1+, Mistral, Command-R, DeepSeek-Coder,
+Hermes 2/3). Models outside that list still chat fine but are warned
+once when tools are requested, so the user can pick a tool-capable
+model instead of silently watching tool calls vanish.
+"""
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any
 
@@ -9,8 +18,39 @@ import httpx
 
 from .base import Message, Provider, ProviderResponse, Role, ToolCall, ToolChoice, ToolSpec
 
+_log = logging.getLogger(__name__)
 _DEFAULT_MODEL = "qwen3:14b"
 _DEFAULT_URL = "http://127.0.0.1:11434"
+
+# Lowercased prefixes of Ollama model families with native tool-calling
+# support via the OpenAI-compat /v1/chat/completions endpoint.
+_TOOL_CAPABLE_PREFIXES: tuple[str, ...] = (
+    "qwen2.5",
+    "qwen3",
+    "qwen2",
+    "llama3.1",
+    "llama3.2",
+    "llama3.3",
+    "llama4",
+    "mistral",
+    "mixtral",
+    "command-r",
+    "command-a",
+    "deepseek-coder",
+    "deepseek-r1",
+    "deepseek-v3",
+    "hermes2",
+    "hermes3",
+    "nous-hermes",
+    "firefunction",
+)
+
+
+def _model_supports_tools(model: str) -> bool:
+    if not model:
+        return False
+    head = model.split(":", 1)[0].lower()
+    return any(head.startswith(prefix) for prefix in _TOOL_CAPABLE_PREFIXES)
 
 
 class OllamaProvider(Provider):
@@ -18,6 +58,7 @@ class OllamaProvider(Provider):
         super().__init__(config)
         self._base_url = config.get("base_url") or os.environ.get("OLLAMA_HOST") or _DEFAULT_URL
         self._model = config.get("model") or _DEFAULT_MODEL
+        self._tool_warned = False
 
     def get_model(self) -> str:
         return self._model
@@ -86,6 +127,14 @@ class OllamaProvider(Provider):
             "stream": False,
         }
         if tools:
+            if not _model_supports_tools(self._model) and not self._tool_warned:
+                _log.warning(
+                    "Ollama model %r is not in the tool-capable allowlist. "
+                    "Tool calls may be ignored silently. Try qwen2.5-coder:*, "
+                    "llama3.1:*, mistral:*, or hermes3:* for reliable tool use.",
+                    self._model,
+                )
+                self._tool_warned = True
             payload["tools"] = self._format_tools(tools)
         tc = self._format_tool_choice(tool_choice)
         if tc is not None:
