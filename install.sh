@@ -197,11 +197,18 @@ install_koda() {
     info "Installing K.O.D.A...."
     export VIRTUAL_ENV="$VENV_DIR"
 
-    if $UV_CMD pip install --quiet "$SOURCE_DIR" 2>/dev/null; then
-        ok "Installed"
-    else
-        fail "Installation failed"
+    # Stream real errors — debugging an unhappy install was impossible
+    # when stderr went to /dev/null.
+    if ! $UV_CMD pip install "$SOURCE_DIR"; then
+        warn "First install attempt failed \u2014 retrying against a fresh venv..."
+        rm -rf "$VENV_DIR"
+        $UV_CMD venv "$VENV_DIR" --python "$MIN_PYTHON" --quiet
+        export VIRTUAL_ENV="$VENV_DIR"
+        if ! $UV_CMD pip install "$SOURCE_DIR"; then
+            fail "Installation failed. See errors above."
+        fi
     fi
+    ok "Installed"
 }
 
 # ── Shell integration ──────────────────────────────────────────────
@@ -256,6 +263,8 @@ print_success() {
     printf "  ${GOLD}koda${RESET}              Start the REPL\n"
     printf "  ${GOLD}koda setup${RESET}         Re-run wizard\n"
     printf "  ${GOLD}koda doctor${RESET}        Diagnose config\n"
+    printf "  ${GOLD}koda update${RESET}        Pull + install the latest release\n"
+    printf "  ${GOLD}koda uninstall${RESET}     Remove K.O.D.A. (interactive)\n"
     echo ""
 
     LOGIN_SHELL="$(basename "${SHELL:-/bin/bash}")"

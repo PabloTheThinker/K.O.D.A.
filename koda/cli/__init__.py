@@ -440,6 +440,7 @@ def main(argv: list[str] | None = None) -> int:
         print("       koda mcp               start MCP server (expose tools)")
         print("       koda telegram          start the Telegram bridge daemon")
         print("       koda update            pull + install the latest release")
+        print("       koda uninstall         remove K.O.D.A. (interactive checklist)")
         print("       koda profile <cmd>     list | create | use | delete | show")
         print("       koda -p <name> ...     use a named profile for this command")
         print()
@@ -469,6 +470,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if argv and argv[0] == "update":
         return _cmd_update(argv[1:])
+
+    if argv and argv[0] == "uninstall":
+        return _cmd_uninstall(argv[1:])
 
     if argv and argv[0] in {"profile", "profiles"}:
         return _cmd_profile(argv[1:])
@@ -551,6 +555,245 @@ def _cmd_update(argv: list[str]) -> int:
     else:
         print(f"\n✗ update failed (rc={result.returncode})", file=sys.stderr)
     return result.returncode
+
+
+def _cmd_uninstall(argv: list[str]) -> int:
+    """Remove K.O.D.A. with an interactive checklist.
+
+    Categories:
+      1. binaries  — install dir (.source/.venv) + ~/.local/bin/koda launcher
+      2. config    — config.yaml, secrets.env, SOUL.md, active_profile/engagement
+      3. data      — sessions.db, approvals.json, audit/, evidence/, engagements/
+      4. profiles  — ~/.koda/profiles/* (non-default profiles)
+      5. shell     — PATH export line added to ~/.bashrc or ~/.zshrc
+    """
+    import shutil
+    from pathlib import Path
+
+    if argv and argv[0] in {"-h", "--help"}:
+        print("usage: koda uninstall [--all] [--yes] [--dry-run]")
+        print()
+        print("  --all       remove every category without asking")
+        print("  --yes       skip the final y/N confirmation")
+        print("  --dry-run   print what would be removed, but don't delete")
+        return 0
+
+    all_mode = "--all" in argv
+    yes_mode = "--yes" in argv
+    dry_run = "--dry-run" in argv
+    unknown = [a for a in argv if a not in {"--all", "--yes", "--dry-run"}]
+    if unknown:
+        print(f"unknown flag: {unknown[0]}", file=sys.stderr)
+        return 2
+
+    home = Path.home()
+    koda_home = Path(os.environ.get("KODA_HOME", home / ".koda")).expanduser()
+
+    # Detect install dir from sys.executable (…/install/.venv/bin/python)
+    exe = Path(sys.executable).resolve()
+    install_dir: Path | None = None
+    candidate = exe.parent.parent.parent
+    if (candidate / ".source" / ".git").exists() and (candidate / ".venv").exists():
+        install_dir = candidate
+
+    launcher = home / ".local" / "bin" / "koda"
+
+    categories: list[dict] = [
+        {
+            "key": "binaries",
+            "label": "Code + venv + launcher",
+            "paths": [p for p in (install_dir, launcher) if p],
+            "desc": "reinstall required to use koda again",
+        },
+        {
+            "key": "config",
+            "label": "Config + secrets + soul",
+            "paths": [
+                koda_home / "config.yaml",
+                koda_home / "secrets.env",
+                koda_home / "SOUL.md",
+                koda_home / "active_profile",
+                koda_home / "active_engagement",
+            ],
+            "desc": "provider keys, wizard config, engagement pointer",
+        },
+        {
+            "key": "data",
+            "label": "Session data + evidence + audit",
+            "paths": [
+                koda_home / "sessions.db",
+                koda_home / "approvals.json",
+                koda_home / "audit",
+                koda_home / "evidence",
+                koda_home / "engagements",
+                koda_home / "credentials",
+                koda_home / "telegram_inbox",
+                koda_home / "telegram_offset",
+            ],
+            "desc": "irreversible — engagement records go with this",
+        },
+        {
+            "key": "profiles",
+            "label": "Non-default profiles",
+            "paths": [koda_home / "profiles"],
+            "desc": "every saved profile under ~/.koda/profiles/",
+        },
+        {
+            "key": "shell",
+            "label": "Shell PATH export",
+            "paths": [],  # special — we edit files, not delete them
+            "desc": "strips the `# K.O.D.A.` block from ~/.bashrc / ~/.zshrc",
+        },
+    ]
+
+    # Prune to what actually exists so we don't ask about phantom dirs.
+    def _has_content(cat: dict) -> bool:
+        if cat["key"] == "shell":
+            for rc in (home / ".bashrc", home / ".zshrc", home / ".profile"):
+                if rc.exists() and "# K.O.D.A." in _safe_read(rc):
+                    return True
+            return False
+        return any(p.exists() for p in cat["paths"])
+
+    present = [c for c in categories if _has_content(c)]
+    if not present:
+        print("nothing to uninstall — no K.O.D.A. files found.")
+        return 0
+
+    print("\n  K.O.D.A. \u2014 uninstall\n")
+    print(f"  install dir:  {install_dir or '(not detected)'}")
+    print(f"  KODA_HOME:    {koda_home}")
+    print(f"  launcher:     {launcher if launcher.exists() else '(not found)'}")
+    if dry_run:
+        print("  DRY RUN \u2014 nothing will be removed\n")
+    else:
+        print()
+
+    selected: list[dict] = []
+    if all_mode:
+        selected = list(present)
+        print("  --all: selecting every category.\n")
+    else:
+        print("  Select what to remove (y/N per category):\n")
+        for cat in present:
+            line = f"    [{cat['key']:<9}] {cat['label']} \u2014 {cat['desc']}"
+            print(line)
+            try:
+                ans = input("      remove? [y/N] ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print("\naborted.")
+                return 1
+            if ans in {"y", "yes"}:
+                selected.append(cat)
+
+    if not selected:
+        print("\nnothing selected. exiting.")
+        return 0
+
+    print("\n  Will remove:")
+    for cat in selected:
+        print(f"    \u2022 {cat['label']}")
+        if cat["key"] == "shell":
+            continue
+        for p in cat["paths"]:
+            if p.exists():
+                print(f"        - {p}")
+
+    if not yes_mode and not dry_run:
+        try:
+            ans = input("\n  proceed? [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\naborted.")
+            return 1
+        if ans not in {"y", "yes"}:
+            print("aborted.")
+            return 1
+
+    removed = 0
+    for cat in selected:
+        if cat["key"] == "shell":
+            removed += _strip_shell_path_lines(home, dry_run=dry_run)
+            continue
+        for p in cat["paths"]:
+            if not p.exists():
+                continue
+            if dry_run:
+                print(f"  would remove: {p}")
+                removed += 1
+                continue
+            try:
+                if p.is_dir() and not p.is_symlink():
+                    shutil.rmtree(p)
+                else:
+                    p.unlink()
+                print(f"  removed: {p}")
+                removed += 1
+            except OSError as exc:
+                print(f"  failed: {p} \u2014 {exc}", file=sys.stderr)
+
+    # If KODA_HOME is now empty, sweep the directory itself.
+    if not dry_run and koda_home.exists():
+        try:
+            remaining = [p for p in koda_home.iterdir()]
+            if not remaining:
+                koda_home.rmdir()
+                print(f"  removed: {koda_home}")
+        except OSError:
+            pass
+
+    print(f"\n\u2713 uninstall complete \u2014 {removed} item(s) {'listed' if dry_run else 'removed'}.")
+    if dry_run:
+        print("  (dry-run: nothing was actually deleted)")
+    return 0
+
+
+def _safe_read(path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return ""
+
+
+def _strip_shell_path_lines(home, *, dry_run: bool) -> int:
+    """Remove the '# K.O.D.A.' block the installer added to shell RC files."""
+    from pathlib import Path
+
+    touched = 0
+    for rc in (home / ".bashrc", home / ".zshrc", home / ".profile"):
+        if not rc.exists():
+            continue
+        content = _safe_read(rc)
+        if "# K.O.D.A." not in content:
+            continue
+
+        lines = content.splitlines()
+        out: list[str] = []
+        skip = 0
+        for line in lines:
+            if skip > 0:
+                skip -= 1
+                continue
+            if line.strip() == "# K.O.D.A.":
+                # Skip this line + the next PATH export (installer pairs them).
+                skip = 1
+                continue
+            out.append(line)
+
+        new_content = "\n".join(out)
+        if new_content and not new_content.endswith("\n"):
+            new_content += "\n"
+
+        if dry_run:
+            print(f"  would edit: {rc} (strip `# K.O.D.A.` block)")
+        else:
+            try:
+                rc.write_text(new_content, encoding="utf-8")
+                print(f"  edited: {rc} (stripped K.O.D.A. PATH block)")
+            except OSError as exc:
+                print(f"  failed editing {rc}: {exc}", file=sys.stderr)
+                continue
+        touched += 1
+    return touched
 
 
 def _doctor() -> int:
