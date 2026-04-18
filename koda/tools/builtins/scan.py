@@ -115,10 +115,11 @@ def _scan_run(path: str) -> ToolResult:
 
 
 register(Tool(
-    name="scan.run",
+    name="scan.secrets",
     description=(
-        "Run a static secret-pattern audit over a directory. Reports real pattern matches only; "
-        "does NOT invent CVEs. Use this before claiming anything about the safety of a codebase."
+        "Static secret-pattern audit over a directory. Reports real pattern matches only "
+        "(AWS keys, GH tokens, OpenAI/Anthropic keys, SSH private keys, Slack tokens). "
+        "Does NOT invent CVEs. Fast, no dependencies. Use as a quick first pass."
     ),
     input_schema={
         "type": "object",
