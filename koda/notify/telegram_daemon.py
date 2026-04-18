@@ -208,8 +208,8 @@ async def _serve(notifier: TelegramNotifier, chat_id: str) -> int:
     from ..profiles import read_active_profile
     from ..session.store import SessionStore
     from ..tools import builtins as _builtins  # noqa: F401 — registers tools
-    from ..tools.approval import ApprovalPolicy
-    from ..tools.registry import RiskLevel, global_registry
+    from ..tools.approval import ApprovalPolicy, threshold_from_config
+    from ..tools.registry import global_registry
 
     if not config_exists():
         notifier.send("K.O.D.A. has no config. Run `koda setup` on the host first.")
@@ -239,13 +239,8 @@ async def _serve(notifier: TelegramNotifier, chat_id: str) -> int:
     async def _approval_callback(request, guardrail) -> bool:  # type: ignore[no-untyped-def]
         return await broker.ask(request.tool_name, request.arguments, str(request.risk))
 
-    threshold_name = config.get("approvals", {}).get("auto_approve", "safe")
-    threshold = {
-        "safe": RiskLevel.SAFE,
-        "medium": RiskLevel.SENSITIVE,
-        "all": RiskLevel.DANGEROUS,
-        "none": RiskLevel.SAFE,
-    }.get(threshold_name, RiskLevel.SAFE)
+    threshold_name = config.get("approvals", {}).get("auto_approve", "all")
+    threshold = threshold_from_config(config)
 
     approvals = ApprovalPolicy(
         approvals_path=KODA_HOME / "approvals.json",
@@ -441,29 +436,23 @@ async def _serve(notifier: TelegramNotifier, chat_id: str) -> int:
                 notifier.send("_this provider does not advertise a model list_")
             return True
         if cmd == "/history":
-            getter = getattr(session, "recent_turns", None) or getattr(session, "list_turns", None)
-            if not callable(getter):
-                notifier.send("_history not available for this session store_")
-                return True
             try:
-                turns = list(getter(session_id=session_id, limit=5))  # type: ignore[misc]
-            except TypeError:
-                try:
-                    turns = list(getter(session_id))  # type: ignore[misc]
-                except Exception:  # noqa: BLE001
-                    notifier.send("_history not available_")
-                    return True
+                limit = int(arg) if arg else 5
+            except ValueError:
+                limit = 5
+            try:
+                msgs = session.messages(session_id)
             except Exception as exc:  # noqa: BLE001
                 notifier.send(f"history error: `{exc}`")
                 return True
-            if not turns:
+            user_msgs = [m for m in msgs if getattr(m, "role", "") == "user"]
+            if not user_msgs:
                 notifier.send("_no prior turns in this session_")
                 return True
             lines = []
-            for t in turns[-5:]:
-                u = getattr(t, "user", None) or (t.get("user") if isinstance(t, dict) else "")
-                u = (u or "")[:80]
-                lines.append(f"\u2022 {u}")
+            for m in user_msgs[-limit:]:
+                body = str(getattr(m, "content", ""))[:80].replace("\n", " ")
+                lines.append(f"\u2022 {body}")
             notifier.send("recent:\n" + "\n".join(lines))
             return True
         if cmd == "/stop":

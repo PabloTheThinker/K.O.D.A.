@@ -136,6 +136,19 @@ def _pick_provider_auto() -> tuple[str, dict]:
     return "ollama", {"model": os.environ.get("KODA_MODEL") or "qwen3:14b"}
 
 
+_REPL_HELP = """
+commands:
+  /help                    this help
+  /new, /reset             start a fresh session (clears memory)
+  /status                  show session + provider stats
+  /model [id]              show or switch model
+  /models                  list models advertised by the provider
+  /history [n=5]           show last n turns in this session
+  /setup, /wizard          (re)run the setup wizard
+  /exit, /quit, /q         exit the REPL
+""".strip()
+
+
 async def _repl() -> int:
     from ..adapters import create_provider
     from ..agent.loop import TurnLoop, TurnOptions
@@ -146,8 +159,8 @@ async def _repl() -> int:
     from ..profiles import read_active_profile, seed_default_soul
     from ..session.store import SessionStore
     from ..tools import builtins as _builtins  # noqa: F401 — registers tools
-    from ..tools.approval import ApprovalPolicy
-    from ..tools.registry import RiskLevel, global_registry
+    from ..tools.approval import ApprovalPolicy, threshold_from_config
+    from ..tools.registry import global_registry
     from .wizard import run_setup_wizard
 
     KODA_HOME.mkdir(parents=True, exist_ok=True)
@@ -167,15 +180,17 @@ async def _repl() -> int:
 
     active = read_active_profile()
     profile_label = active or "default"
-    engagement = os.environ.get("KODA_ENGAGEMENT", "").strip() or "default"
+    engagement = os.environ.get("KODA_ENGAGEMENT", "").strip() or \
+        config.get("engagement", {}).get("default", "default")
 
     audit = AuditLogger(profile=profile_label)
     evidence = EvidenceStore()
     credentials = CredentialBroker(audit=audit)
 
+    threshold = threshold_from_config(config)
     approvals = ApprovalPolicy(
         approvals_path=KODA_HOME / "approvals.json",
-        auto_approve_threshold=RiskLevel.SAFE,
+        auto_approve_threshold=threshold,
         audit=audit,
     )
     session = SessionStore(KODA_HOME / "sessions.db")
@@ -194,14 +209,18 @@ async def _repl() -> int:
         credentials=credentials,
     )
 
+    stats = {"turns": 0, "tool_calls": 0}
+    approval_tier = config.get("approvals", {}).get("auto_approve", "all")
+
     print(_BANNER)
     print(f"profile:    {profile_label}")
     print(f"engagement: {engagement}")
     print(f"home:       {KODA_HOME}")
     print(f"provider:   {provider_name}   model: {provider.get_model()}")
+    print(f"approvals:  {approval_tier}  (threshold: {threshold.value})")
     print(f"tools:      {', '.join(registry.names())}")
     print(f"session:    {session_id}")
-    print("type a question, or /exit to quit.\n")
+    print("type a question, or /help for commands.\n")
 
     while True:
         try:
@@ -213,15 +232,93 @@ async def _repl() -> int:
             return 0
         if not prompt:
             continue
-        if prompt in {"/exit", "/quit", "/q"}:
-            audit.emit("session.close", session_id=session_id, engagement=engagement)
-            audit.close()
-            return 0
-        if prompt in {"/setup", "/wizard"}:
-            run_setup_wizard()
+
+        if prompt.startswith("/"):
+            cmd, _, arg = prompt.partition(" ")
+            cmd = cmd.lower()
+            arg = arg.strip()
+
+            if cmd in {"/exit", "/quit", "/q"}:
+                audit.emit("session.close", session_id=session_id, engagement=engagement)
+                audit.close()
+                return 0
+            if cmd in {"/setup", "/wizard"}:
+                run_setup_wizard()
+                continue
+            if cmd == "/help":
+                print(_REPL_HELP + "\n")
+                continue
+            if cmd == "/status":
+                print(
+                    f"  turns: {stats['turns']}  tool_calls: {stats['tool_calls']}\n"
+                    f"  session: {session_id}  engagement: {engagement}\n"
+                    f"  provider: {provider_name}  model: {provider.get_model()}\n"
+                    f"  approvals: {approval_tier} ({threshold.value})\n"
+                )
+                continue
+            if cmd in {"/new", "/reset"}:
+                session_id = session.create(title="interactive", engagement=engagement)
+                loop.session_id = session_id
+                stats["turns"] = 0
+                stats["tool_calls"] = 0
+                audit.emit("session.open", session_id=session_id, engagement=engagement,
+                           profile=profile_label, reason=cmd)
+                print(f"  new session: {session_id}\n")
+                continue
+            if cmd == "/model":
+                if not arg:
+                    print(f"  current model: {provider.get_model()}\n")
+                elif hasattr(provider, "set_model"):
+                    try:
+                        provider.set_model(arg)  # type: ignore[attr-defined]
+                        audit.emit("repl.model_switch", model=arg)
+                        print(f"  model now: {arg}\n")
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"  switch failed: {exc}\n")
+                else:
+                    print("  provider does not support runtime model switching\n")
+                continue
+            if cmd == "/models":
+                listed = getattr(provider, "list_models", None)
+                if not callable(listed):
+                    print("  provider does not advertise a model list\n")
+                    continue
+                try:
+                    names = list(listed())
+                except Exception as exc:  # noqa: BLE001
+                    print(f"  list failed: {exc}\n")
+                    continue
+                if not names:
+                    print("  no models listed\n")
+                else:
+                    print("  " + "\n  ".join(names[:50]) + "\n")
+                continue
+            if cmd == "/history":
+                try:
+                    limit = int(arg) if arg else 5
+                except ValueError:
+                    limit = 5
+                try:
+                    msgs = session.messages(session_id)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"  history error: {exc}\n")
+                    continue
+                user_msgs = [m for m in msgs if getattr(m, "role", "") == "user"]
+                if not user_msgs:
+                    print("  no prior turns in this session\n")
+                    continue
+                for m in user_msgs[-limit:]:
+                    body = str(getattr(m, "content", ""))[:120].replace("\n", " ")
+                    print(f"  • {body}")
+                print()
+                continue
+
+            print(f"  unknown command: {cmd}  — /help for list\n")
             continue
 
         trace = await loop.run(prompt, TurnOptions())
+        stats["turns"] += 1
+        stats["tool_calls"] += trace.tool_calls_made
         print()
         if trace.aborted:
             print(f"[aborted: {trace.abort_reason}]")
@@ -342,6 +439,7 @@ def main(argv: list[str] | None = None) -> int:
         print("       koda doctor            show config + provider status")
         print("       koda mcp               start MCP server (expose tools)")
         print("       koda telegram          start the Telegram bridge daemon")
+        print("       koda update            pull + install the latest release")
         print("       koda profile <cmd>     list | create | use | delete | show")
         print("       koda -p <name> ...     use a named profile for this command")
         print()
@@ -369,10 +467,90 @@ def main(argv: list[str] | None = None) -> int:
         from ..notify.telegram_daemon import main as telegram_main
         return telegram_main(argv[1:])
 
+    if argv and argv[0] == "update":
+        return _cmd_update(argv[1:])
+
     if argv and argv[0] in {"profile", "profiles"}:
         return _cmd_profile(argv[1:])
 
     return asyncio.run(_repl())
+
+
+_INSTALLER_URL = "https://koda.vektraindustries.com/install"
+
+
+def _cmd_update(argv: list[str]) -> int:
+    """Update K.O.D.A. in place by re-running the hosted installer.
+
+    Preserves the existing install directory and venv; the installer does
+    `git pull --ff-only` when .source/ is already a clone. Runs with
+    --no-wizard so user config stays untouched.
+    """
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    if argv and argv[0] in {"-h", "--help"}:
+        print("usage: koda update [--branch NAME] [--dir PATH] [--url URL]")
+        print()
+        print("  --branch NAME   git branch to pull (default: main)")
+        print("  --dir PATH      install directory (default: auto-detected)")
+        print("  --url URL       installer URL (default: hosted)")
+        return 0
+
+    branch = "main"
+    install_dir: str | None = None
+    url = _INSTALLER_URL
+
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--branch" and i + 1 < len(argv):
+            branch = argv[i + 1]; i += 2; continue
+        if a == "--dir" and i + 1 < len(argv):
+            install_dir = argv[i + 1]; i += 2; continue
+        if a == "--url" and i + 1 < len(argv):
+            url = argv[i + 1]; i += 2; continue
+        print(f"unknown flag: {a}", file=sys.stderr)
+        return 2
+
+    # Auto-detect install dir from sys.executable: {install}/.venv/bin/python
+    if install_dir is None:
+        exe = Path(sys.executable).resolve()
+        candidate = exe.parent.parent.parent  # bin -> .venv -> {install}
+        if (candidate / ".source" / ".git").exists():
+            install_dir = str(candidate)
+
+    if not shutil.which("curl"):
+        print("error: curl not found on PATH", file=sys.stderr)
+        return 1
+    if not shutil.which("bash"):
+        print("error: bash not found on PATH", file=sys.stderr)
+        return 1
+
+    print(f"→ updating K.O.D.A. from {url} (branch: {branch})")
+    if install_dir:
+        print(f"  install dir: {install_dir}")
+
+    bash_args = ["--no-wizard", "--branch", branch]
+    if install_dir:
+        bash_args += ["--dir", install_dir]
+
+    # curl URL | bash -s -- <args...>
+    cmd = f"curl -fsSL {url} | bash -s -- " + " ".join(
+        f"'{a}'" if " " in a else a for a in bash_args
+    )
+    try:
+        result = subprocess.run(cmd, shell=True, check=False)
+    except KeyboardInterrupt:
+        print("\naborted", file=sys.stderr)
+        return 130
+
+    if result.returncode == 0:
+        print("\n✓ update complete — restart any running `koda` sessions.")
+    else:
+        print(f"\n✗ update failed (rc={result.returncode})", file=sys.stderr)
+    return result.returncode
 
 
 def _doctor() -> int:

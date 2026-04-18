@@ -56,6 +56,25 @@ ApprovalCallback = Callable[
 ]
 
 
+_THRESHOLD_MAP: dict[str, RiskLevel] = {
+    "safe": RiskLevel.SAFE,
+    "medium": RiskLevel.SENSITIVE,
+    "all": RiskLevel.DANGEROUS,
+    "none": RiskLevel.SAFE,
+}
+
+
+def threshold_from_config(config: dict, default: str = "all") -> RiskLevel:
+    """Map the wizard-level approval tier into the RiskLevel threshold.
+
+    Values: safe | medium | all | none. 'all' auto-approves up to DANGEROUS;
+    the BLOCKED guardrail tier always requires explicit approval via the
+    callback regardless of threshold.
+    """
+    tier = str(config.get("approvals", {}).get("auto_approve", default)).strip().lower()
+    return _THRESHOLD_MAP.get(tier, _THRESHOLD_MAP[default])
+
+
 class ApprovalPolicy:
     _RISK_ORDER = {RiskLevel.SAFE: 0, RiskLevel.SENSITIVE: 1, RiskLevel.DANGEROUS: 2}
 
