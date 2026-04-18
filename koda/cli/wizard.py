@@ -12,8 +12,9 @@ Stages:
     5. Engagement naming
     6. Approval tier (safe / medium / all / none)
     7. Scanner probe with install hints
-    8. Scope targets (optional)
-    9. Write config, self-test, launch
+    8. Alert channels (Telegram opt-in)
+    9. Scope targets (optional)
+   10. Write config, self-test, launch
 
 The wizard reflects K.O.D.A.'s harness model: mount on any engine, scope to
 one engagement at a time, audit everything, ground every claim.
@@ -30,6 +31,7 @@ from typing import Any, Callable
 from ..adapters import create_provider
 from ..adapters.base import Message, Role
 from ..config import CONFIG_PATH, KODA_HOME, load_config, save_config
+from ..notify import TelegramNotifier
 from ..security.scanners.registry import detect_installed_scanners
 from ..wizard import (
     Prompter,
@@ -60,6 +62,8 @@ ACTIVE_ENGAGEMENT_FILE = KODA_HOME / "active_engagement"
 
 _ENGAGEMENT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 _SCOPE_TARGET_CAP = 50
+_TELEGRAM_TOKEN_RE = re.compile(r"^\d{6,12}:[A-Za-z0-9_-]{30,}$")
+_TELEGRAM_CHAT_RE = re.compile(r"^-?\d{4,}$")
 
 
 # Install hints for scanners that K.O.D.A. wraps. Shown in Stage 7 when the
@@ -183,6 +187,8 @@ class _WizardState:
     approval_tier: str = "safe"
     scanners_available: list[str] = field(default_factory=list)
     scope_targets: list[str] = field(default_factory=list)
+    telegram_enabled: bool = False
+    telegram_secrets: dict[str, str] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -370,6 +376,81 @@ def _stage_scanners(prompter: Prompter, quick: bool) -> list[str]:
     return available
 
 
+def _stage_alerts(
+    prompter: Prompter,
+    quick: bool,
+) -> tuple[bool, dict[str, str]]:
+    """Return (enabled, secrets_to_persist)."""
+    if quick:
+        return False, {}
+
+    prompter.section("Alert channels")
+    prompter.note(
+        "K.O.D.A. can push scan completions, critical findings, and\n"
+        "session events to an external channel. Credentials are stored\n"
+        "in ~/.koda/secrets.env (0600) — never in config.yaml.",
+        title="Notifications",
+    )
+
+    if not prompter.confirm("Connect Telegram for alerts?", default=False):
+        return False, {}
+
+    prompter.note(
+        "1. Open @BotFather on Telegram, /newbot, copy the token.\n"
+        "2. Message your bot, then visit\n"
+        "   https://api.telegram.org/bot<TOKEN>/getUpdates to find your chat_id.\n"
+        "3. Paste both below.",
+        title="Telegram setup",
+    )
+
+    def _validate_token(value: str) -> str | None:
+        if not _TELEGRAM_TOKEN_RE.match(value):
+            return "token format: <digits>:<35+ chars>. Copy it from @BotFather."
+        return None
+
+    def _validate_chat(value: str) -> str | None:
+        if not _TELEGRAM_CHAT_RE.match(value):
+            return "chat_id must be an integer (negative for groups)."
+        return None
+
+    token = prompter.password("Telegram bot token", validate=_validate_token)
+
+    with prompter.progress("verifying token") as p:
+        verify = TelegramNotifier(token, chat_id="0").verify()
+        p.stop(verify.detail if verify.ok else f"failed: {verify.detail}")
+
+    if not verify.ok:
+        prompter.note(
+            "Token did not verify against Telegram. Skipping alert setup.\n"
+            "You can re-run `koda setup` to try again.",
+            title="Telegram skipped",
+        )
+        return False, {}
+
+    chat_id = prompter.text("Telegram chat_id", validate=_validate_chat)
+
+    with prompter.progress("sending test message") as p:
+        notifier = TelegramNotifier(token, chat_id)
+        result = notifier.send(
+            "*K.O.D.A. setup*\nAlert channel wired. You will receive scan and finding notifications here.",
+        )
+        p.stop(result.detail if result.ok else f"failed: {result.detail}")
+
+    if not result.ok:
+        prompter.note(
+            "Could not deliver test message. Common causes: wrong chat_id,\n"
+            "bot not yet messaged by your account, or group bot lacks access.\n"
+            "Setup continues; you can re-run to reconfigure.",
+            title="Telegram test failed",
+        )
+        return False, {}
+
+    return True, {
+        "KODA_TELEGRAM_BOT_TOKEN": token,
+        "KODA_TELEGRAM_CHAT_ID": chat_id,
+    }
+
+
 def _stage_scope(prompter: Prompter, quick: bool) -> list[str]:
     if quick:
         return []
@@ -440,6 +521,7 @@ def _render_summary(
         f"engagement:  {state.engagement}\n"
         f"approvals:   {state.approval_tier}\n"
         f"scanners:    {scanner_line}\n"
+        f"alerts:      {'telegram' if state.telegram_enabled else 'none'}\n"
         f"scope:       {len(state.scope_targets)} target(s)\n"
         f"config:      {path}",
         title="Ready",
@@ -526,6 +608,7 @@ def run_setup_wizard(
         state.engagement = _stage_engagement(prompter, quick)
         state.approval_tier = _stage_approval(prompter, quick)
         state.scanners_available = _stage_scanners(prompter, quick)
+        state.telegram_enabled, state.telegram_secrets = _stage_alerts(prompter, quick)
         state.scope_targets = _stage_scope(prompter, quick)
     except WizardCancelled as exc:
         prompter.outro(f"cancelled: {exc}")
@@ -536,9 +619,11 @@ def run_setup_wizard(
     result = state.provider_result
 
     KODA_HOME.mkdir(parents=True, exist_ok=True)
-    if result.secrets:
-        save_secrets(result.secrets, SECRETS_PATH)
-        for key, value in result.secrets.items():
+    merged_secrets: dict[str, str] = dict(result.secrets)
+    merged_secrets.update(state.telegram_secrets)
+    if merged_secrets:
+        save_secrets(merged_secrets, SECRETS_PATH)
+        for key, value in merged_secrets.items():
             os.environ.setdefault(key, value)
         prompter.status(True, f"saved secrets to {SECRETS_PATH}")
 
@@ -552,6 +637,9 @@ def run_setup_wizard(
         "scope": {
             "targets": list(state.scope_targets),
             "scanners_available": list(state.scanners_available),
+        },
+        "notify": {
+            "telegram": {"enabled": state.telegram_enabled},
         },
     }
     save_config(config, path)
