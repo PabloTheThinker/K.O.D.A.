@@ -159,26 +159,30 @@ class SarifResult:
         """Convert to a UnifiedFinding."""
         loc = self.locations[0] if self.locations else SarifLocation()
 
-        # Map SARIF level to severity
+        # Map SARIF level to severity. Per SARIF 2.1.0 §3.27.10, the result's
+        # level (if explicitly set) overrides the rule's defaultConfiguration;
+        # only fall back to the rule default when the result omits level.
         severity_map = {
             "error": Severity.HIGH,
             "warning": Severity.MEDIUM,
             "note": Severity.LOW,
             "none": Severity.INFO,
         }
-        severity = severity_map.get(self.level, Severity.MEDIUM)
+        result_level = (self.level or "").lower()
+        if result_level in severity_map:
+            severity = severity_map[result_level]
+        elif self._rule and self._rule.default_level in severity_map:
+            severity = severity_map[self._rule.default_level]
+        else:
+            severity = Severity.MEDIUM
 
-        # If rule has CWE or properties that indicate higher severity, adjust
-        if self._rule:
-            rule_level = self._rule.default_level
-            if rule_level in severity_map:
-                severity = severity_map[rule_level]
-            # Check properties for severity override
-            props_severity = self.properties.get("severity") or self.properties.get("impact")
-            if props_severity:
-                parsed = Severity.from_str(str(props_severity))
-                if parsed != Severity.UNKNOWN:
-                    severity = parsed
+        # Scanner-specific severity hints on the result properties win last —
+        # they carry CVSS/EPSS-derived grades the generic level can't express.
+        props_severity = self.properties.get("severity") or self.properties.get("impact")
+        if props_severity:
+            parsed = Severity.from_str(str(props_severity))
+            if parsed != Severity.UNKNOWN:
+                severity = parsed
 
         # Extract CWE from rule
         cwe = []

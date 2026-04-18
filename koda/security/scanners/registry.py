@@ -450,6 +450,65 @@ def run_nmap(target: str, ports: str = "1-1000", timeout: int = 300,
                       elapsed=elapsed, command=" ".join(cmd))
 
 
+def run_grype(target: str, timeout: int = 300,
+              extra_args: Optional[list[str]] = None) -> ScanResult:
+    """Run Grype vulnerability scanner (SBOM/image/directory)."""
+    start = time.monotonic()
+    cmd = ["grype", target, "-o", "json"]
+    if extra_args:
+        cmd.extend(extra_args)
+
+    ok, stdout, stderr, code = _run_cmd(cmd, timeout=timeout)
+    elapsed = time.monotonic() - start
+
+    if not ok and code == -2:
+        return ScanResult(False, "grype", error="grype not installed", elapsed=elapsed)
+
+    findings = []
+    output = None
+    try:
+        output = json.loads(stdout)
+        for match in output.get("matches", []):
+            vuln = match.get("vulnerability", {}) or {}
+            artifact = match.get("artifact", {}) or {}
+            vuln_id = vuln.get("id", "")
+            sev = Severity.from_str(vuln.get("severity", "UNKNOWN"))
+            # Grype nests CVSS in a list; take first V3 vector if present
+            cvss_score = 0.0
+            for entry in vuln.get("cvss", []) or []:
+                metrics = entry.get("metrics", {}) or {}
+                base = metrics.get("baseScore")
+                if isinstance(base, (int, float)) and base > cvss_score:
+                    cvss_score = float(base)
+            locations = artifact.get("locations", []) or []
+            file_path = locations[0].get("path", "") if locations else ""
+            fixed_versions = (vuln.get("fix", {}) or {}).get("versions", []) or []
+            fix_text = ""
+            if fixed_versions:
+                fix_text = f"Upgrade {artifact.get('name', '')} to {fixed_versions[0]}"
+            f = UnifiedFinding(
+                id=UnifiedFinding.make_id("grype", vuln_id, file_path or artifact.get("name", ""), 0),
+                scanner="grype",
+                rule_id=vuln_id,
+                severity=sev,
+                title=f"{vuln_id} in {artifact.get('name', '')} {artifact.get('version', '')}".strip(),
+                description=vuln.get("description", ""),
+                file_path=file_path or artifact.get("name", ""),
+                cve=[vuln_id] if vuln_id.startswith("CVE-") else [],
+                cvss_score=cvss_score,
+                fix_suggestion=fix_text,
+                raw=match,
+            )
+            findings.append(f)
+    except (json.JSONDecodeError, KeyError) as e:
+        if not findings:
+            return ScanResult(False, "grype", error=f"Parse error: {e}",
+                              elapsed=elapsed, raw_output=stdout[:2000])
+
+    return ScanResult(True, "grype", output=output, findings=findings,
+                      elapsed=elapsed, command=" ".join(cmd))
+
+
 def run_sarif_file(path: str) -> ScanResult:
     """Parse a SARIF file directly and extract findings."""
     start = time.monotonic()
@@ -477,6 +536,7 @@ _SCANNER_MAP: dict[str, Callable[..., ScanResult]] = {
     "bandit": run_bandit,
     "osv-scanner": run_osv_scanner,
     "nmap": run_nmap,
+    "grype": run_grype,
     "sarif": run_sarif_file,
 }
 
