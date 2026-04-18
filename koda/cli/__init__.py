@@ -341,6 +341,7 @@ def main(argv: list[str] | None = None) -> int:
         print("       koda setup             (re)run the setup wizard")
         print("       koda doctor            show config + provider status")
         print("       koda mcp               start MCP server (expose tools)")
+        print("       koda telegram          start the Telegram bridge daemon")
         print("       koda profile <cmd>     list | create | use | delete | show")
         print("       koda -p <name> ...     use a named profile for this command")
         print()
@@ -362,6 +363,11 @@ def main(argv: list[str] | None = None) -> int:
     if argv and argv[0] == "mcp":
         from ..mcp.server import main as mcp_main
         return mcp_main(argv[1:])
+
+    if argv and argv[0] == "telegram":
+        _load_secrets_env()
+        from ..notify.telegram_daemon import main as telegram_main
+        return telegram_main(argv[1:])
 
     if argv and argv[0] in {"profile", "profiles"}:
         return _cmd_profile(argv[1:])
