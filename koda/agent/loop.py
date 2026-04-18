@@ -16,6 +16,7 @@ Flow per user turn:
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -25,6 +26,22 @@ from ..security.verifier import format_rejection, verify_draft
 from ..session.store import SessionStore
 from ..tools.approval import ApprovalPolicy, ApprovalRequest
 from ..tools.registry import RiskLevel, ToolRegistry, ToolResult
+
+
+def _usage_meta(usage: dict[str, Any], latency_ms: int) -> dict[str, Any]:
+    """Normalize provider usage dicts into store-friendly metadata.
+
+    Providers disagree on key names — Anthropic uses input_tokens/output_tokens,
+    OpenAI-shaped APIs use prompt_tokens/completion_tokens. Accept both.
+    """
+    u = usage or {}
+    prompt = u.get("prompt_tokens") or u.get("input_tokens") or 0
+    completion = u.get("completion_tokens") or u.get("output_tokens") or 0
+    return {
+        "tokens_prompt": int(prompt or 0),
+        "tokens_completion": int(completion or 0),
+        "latency_ms": latency_ms,
+    }
 
 
 @dataclass
@@ -69,14 +86,26 @@ class TurnLoop:
         tool = self.registry.get(tc.name)
         risk = tool.risk if tool else RiskLevel.SENSITIVE
         approved = await self.approvals.decide(ApprovalRequest(tool_name=tc.name, arguments=tc.arguments, risk=risk))
+        t0 = time.perf_counter()
         if not approved:
             result = ToolResult(content=f"Tool '{tc.name}' was denied by the approval policy.", is_error=True)
         else:
             result = await self.registry.invoke(tc.name, tc.arguments)
+        latency_ms = int((time.perf_counter() - t0) * 1000)
         trace.tool_calls_made += 1
         rendered = f"[tool_result {tc.name}]\n{result.content}"
         trace.tool_transcript.append(rendered)
-        tool_msg = Message(role=Role.TOOL, content=result.content, tool_call_id=tc.id, metadata={"name": tc.name, "is_error": result.is_error})
+        tool_msg = Message(
+            role=Role.TOOL,
+            content=result.content,
+            tool_call_id=tc.id,
+            metadata={
+                "tool_name": tc.name,
+                "is_error": result.is_error,
+                "approved": approved,
+                "latency_ms": latency_ms,
+            },
+        )
         self.session.append(self.session_id, tool_msg)
         return tool_msg
 
@@ -91,7 +120,10 @@ class TurnLoop:
         while trace.iterations < options.max_tool_iterations + options.max_verifier_retries + 4:
             trace.iterations += 1
             messages = self._build_messages(options.extra_system_prompt)
+            t0 = time.perf_counter()
             resp = await self.provider.chat(messages, tools=tools_specs, tool_choice=options.tool_choice)
+            latency_ms = int((time.perf_counter() - t0) * 1000)
+            turn_meta = _usage_meta(resp.usage, latency_ms)
 
             if resp.stop_reason == "error":
                 trace.aborted = True
@@ -99,7 +131,12 @@ class TurnLoop:
                 return trace
 
             if resp.tool_calls:
-                assistant_msg = Message(role=Role.ASSISTANT, content=resp.text, tool_calls=resp.tool_calls)
+                assistant_msg = Message(
+                    role=Role.ASSISTANT,
+                    content=resp.text,
+                    tool_calls=resp.tool_calls,
+                    metadata=turn_meta,
+                )
                 self.session.append(self.session_id, assistant_msg)
                 for tc in resp.tool_calls:
                     await self._run_tool_call(tc, trace)
@@ -113,14 +150,20 @@ class TurnLoop:
             transcript = "\n\n".join(trace.tool_transcript)
             result = verify_draft(draft, transcript)
             if result.ok or verifier_retries >= options.max_verifier_retries:
-                self.session.append(self.session_id, Message(role=Role.ASSISTANT, content=draft))
+                self.session.append(
+                    self.session_id,
+                    Message(role=Role.ASSISTANT, content=draft, metadata=turn_meta),
+                )
                 trace.final_text = draft
                 return trace
 
             verifier_retries += 1
             trace.verifier_rejections += 1
             rejection = format_rejection(result)
-            self.session.append(self.session_id, Message(role=Role.ASSISTANT, content=draft, metadata={"rejected": True}))
+            self.session.append(
+                self.session_id,
+                Message(role=Role.ASSISTANT, content=draft, metadata={**turn_meta, "rejected": True}),
+            )
             self.session.append(self.session_id, Message(role=Role.USER, content=rejection, metadata={"verifier_rejection": True}))
 
         trace.aborted = True
