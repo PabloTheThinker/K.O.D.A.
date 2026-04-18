@@ -41,15 +41,129 @@ class TelegramNotifier:
             return None
         return cls(token, chat)
 
-    def send(self, text: str, *, parse_mode: str = "Markdown") -> TelegramResult:
+    def send(
+        self,
+        text: str,
+        *,
+        parse_mode: str = "Markdown",
+        reply_markup: dict[str, Any] | None = None,
+        disable_web_page_preview: bool = True,
+    ) -> TelegramResult:
         if not text.strip():
             return TelegramResult(False, "empty message")
-        return self._post_form("sendMessage", {
+        fields: dict[str, str] = {
             "chat_id": self.chat_id,
             "text": text[:4096],
             "parse_mode": parse_mode,
+            "disable_web_page_preview": "true" if disable_web_page_preview else "false",
+        }
+        if reply_markup is not None:
+            fields["reply_markup"] = json.dumps(reply_markup)
+
+        result = self._post_form_with_retry("sendMessage", fields)
+
+        # Markdown / HTML can reject on stray chars — fall back to plain text.
+        if not result.ok and parse_mode and "parse" in result.detail.lower():
+            fallback = dict(fields)
+            fallback.pop("parse_mode", None)
+            return self._post_form_with_retry("sendMessage", fallback)
+        return result
+
+    def answer_callback_query(
+        self,
+        callback_query_id: str,
+        *,
+        text: str = "",
+        show_alert: bool = False,
+    ) -> TelegramResult:
+        fields: dict[str, str] = {
+            "callback_query_id": callback_query_id,
+            "show_alert": "true" if show_alert else "false",
+        }
+        if text:
+            fields["text"] = text[:200]
+        return self._post_form("answerCallbackQuery", fields)
+
+    def edit_message_text(
+        self,
+        message_id: int,
+        text: str,
+        *,
+        parse_mode: str = "Markdown",
+        reply_markup: dict[str, Any] | None = None,
+    ) -> TelegramResult:
+        fields: dict[str, str] = {
+            "chat_id": self.chat_id,
+            "message_id": str(message_id),
+            "text": text[:4096],
+            "parse_mode": parse_mode,
             "disable_web_page_preview": "true",
-        })
+        }
+        if reply_markup is not None:
+            fields["reply_markup"] = json.dumps(reply_markup)
+        return self._post_form("editMessageText", fields)
+
+    def set_my_commands(self, commands: list[tuple[str, str]]) -> TelegramResult:
+        payload = [{"command": name, "description": desc} for name, desc in commands]
+        return self._post_form("setMyCommands", {"commands": json.dumps(payload)})
+
+    def get_file_path(self, file_id: str) -> TelegramResult:
+        result = self._post_form("getFile", {"file_id": file_id})
+        if not result.ok:
+            return result
+        fp = (result.data or {}).get("file_path")
+        if not fp:
+            return TelegramResult(False, "no file_path in response")
+        return TelegramResult(True, fp, data=result.data)
+
+    def download_file(self, file_id: str, dest: str | Path) -> TelegramResult:
+        """Download a Telegram file to `dest`. Returns TelegramResult(ok, path)."""
+        info = self.get_file_path(file_id)
+        if not info.ok:
+            return info
+        file_path = info.detail
+        url = f"{_API_BASE}/file/bot{self.bot_token}/{file_path}"
+        dest_path = Path(dest)
+        try:
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            with urllib.request.urlopen(url, timeout=max(self.timeout, 60)) as resp:
+                dest_path.write_bytes(resp.read())
+        except urllib.error.HTTPError as exc:
+            return TelegramResult(False, f"http {exc.code}: {exc.reason}")
+        except urllib.error.URLError as exc:
+            return TelegramResult(False, f"network: {exc.reason}")
+        except OSError as exc:
+            return TelegramResult(False, f"io: {exc}")
+        return TelegramResult(True, str(dest_path), data={"size": dest_path.stat().st_size})
+
+    def _post_form_with_retry(
+        self,
+        endpoint: str,
+        fields: dict[str, str],
+        *,
+        attempts: int = 3,
+    ) -> TelegramResult:
+        """POST with backoff for transient network failures. Non-retryable
+        API errors (4xx other than 429) return immediately."""
+        import time as _time
+        last: TelegramResult | None = None
+        for i in range(attempts):
+            result = self._post_form(endpoint, fields)
+            if result.ok:
+                return result
+            detail = result.detail.lower()
+            transient = (
+                "network:" in detail
+                or "http 5" in detail
+                or "http 429" in detail
+                or "timed out" in detail
+                or "timeout" in detail
+            )
+            last = result
+            if not transient or i == attempts - 1:
+                return result
+            _time.sleep(0.5 * (2 ** i))
+        return last or TelegramResult(False, "unknown error")
 
     def _post_form(self, endpoint: str, fields: dict[str, str]) -> TelegramResult:
         url = f"{_API_BASE}/bot{self.bot_token}/{endpoint}"
