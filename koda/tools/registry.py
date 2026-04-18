@@ -34,6 +34,22 @@ class Tool:
     handler: Handler
     risk: RiskLevel = RiskLevel.SAFE
     category: str = "general"
+    # Whether the tool's output should land in the evidence store.
+    # Default chosen by category so chain-of-custody covers real pentest
+    # output (scans, network probes, host recon) but doesn't bloat the
+    # store with fs.list / fs.read noise. Individual tools can override.
+    capture_evidence: bool | None = None
+
+    def should_capture(self) -> bool:
+        if self.capture_evidence is not None:
+            return self.capture_evidence
+        return self.category in {"security", "network", "host"}
+
+    def content_type_for_capture(self) -> str:
+        # Rough heuristic — SARIF lands as JSON, everything else as text.
+        if self.category == "security" and self.name.endswith(("sarif", "trivy", "grype", "syft")):
+            return "sarif"
+        return "text"
 
     def to_spec(self) -> ToolSpec:
         return ToolSpec(name=self.name, description=self.description, input_schema=self.input_schema)

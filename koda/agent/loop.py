@@ -22,6 +22,7 @@ from typing import Any
 
 from ..adapters.base import Message, Provider, Role, ToolCall
 from ..audit import AuditLogger, NullAuditLogger, hash_arguments
+from ..evidence import EvidenceStore, NullEvidenceStore
 from ..security.prompts import build_security_prompt
 from ..security.verifier import format_rejection, verify_draft
 from ..session.store import SessionStore
@@ -74,6 +75,7 @@ class TurnLoop:
         session_id: str,
         engagement: str = "",
         audit: AuditLogger | NullAuditLogger | None = None,
+        evidence: EvidenceStore | NullEvidenceStore | None = None,
     ) -> None:
         self.provider = provider
         self.registry = registry
@@ -82,6 +84,7 @@ class TurnLoop:
         self.session_id = session_id
         self.engagement = engagement
         self.audit = audit or NullAuditLogger()
+        self.evidence = evidence or NullEvidenceStore()
 
     def _build_messages(self, extra_system_prompt: str) -> list[Message]:
         system = Message(role=Role.SYSTEM, content=build_security_prompt(extra_system_prompt))
@@ -111,17 +114,41 @@ class TurnLoop:
         trace.tool_calls_made += 1
         rendered = f"[tool_result {tc.name}]\n{result.content}"
         trace.tool_transcript.append(rendered)
+
+        args_hash = hash_arguments(tc.arguments)
+        artifact_id = ""
+        if decision.allowed and not result.is_error and tool and tool.should_capture():
+            # Best-effort target extraction for the sidecar — ScopePolicy
+            # uses the same keys so this stays consistent with how we scope.
+            target = ""
+            for key in ("target", "host", "url", "endpoint", "address"):
+                value = (tc.arguments or {}).get(key)
+                if value:
+                    target = str(value)[:200]
+                    break
+            artifact = self.evidence.capture(
+                result.content,
+                tool=tc.name,
+                engagement=self.engagement,
+                session_id=self.session_id,
+                target=target,
+                content_type=tool.content_type_for_capture(),
+                tool_args_hash=args_hash,
+            )
+            artifact_id = artifact.artifact_id
+
         self.audit.emit(
             "tool.call",
             session_id=self.session_id,
             engagement=self.engagement,
             tool=tc.name,
-            args_hash=hash_arguments(tc.arguments),
+            args_hash=args_hash,
             approved=decision.allowed,
             stage=decision.stage,
             rule=decision.matched_rule,
             is_error=result.is_error,
             latency_ms=latency_ms,
+            artifact_id=artifact_id,
         )
         if result.is_error and not decision.allowed:
             # Refused calls are security-relevant — surface a dedicated
@@ -147,6 +174,7 @@ class TurnLoop:
                 "approval_reason": decision.reason,
                 "approval_rule": decision.matched_rule,
                 "latency_ms": latency_ms,
+                "artifact_id": artifact_id,
             },
         )
         self.session.append(self.session_id, tool_msg)
