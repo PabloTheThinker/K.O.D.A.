@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Local state
+.env
+.env.*
+!.env.example
+*.log
+*.sqlite
+*.db
+*.db-wal
+*.db-shm
+
+# K.O.D.A. runtime state
+.koda/
+sessions/
+artifacts/
+
+# Dependencies
+node_modules/
