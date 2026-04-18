@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..adapters.base import Message, Provider, Role, ToolCall
+from ..audit import AuditLogger, NullAuditLogger, hash_arguments
 from ..security.prompts import build_security_prompt
 from ..security.verifier import format_rejection, verify_draft
 from ..session.store import SessionStore
@@ -72,6 +73,7 @@ class TurnLoop:
         session: SessionStore,
         session_id: str,
         engagement: str = "",
+        audit: AuditLogger | NullAuditLogger | None = None,
     ) -> None:
         self.provider = provider
         self.registry = registry
@@ -79,6 +81,7 @@ class TurnLoop:
         self.session = session
         self.session_id = session_id
         self.engagement = engagement
+        self.audit = audit or NullAuditLogger()
 
     def _build_messages(self, extra_system_prompt: str) -> list[Message]:
         system = Message(role=Role.SYSTEM, content=build_security_prompt(extra_system_prompt))
@@ -108,6 +111,30 @@ class TurnLoop:
         trace.tool_calls_made += 1
         rendered = f"[tool_result {tc.name}]\n{result.content}"
         trace.tool_transcript.append(rendered)
+        self.audit.emit(
+            "tool.call",
+            session_id=self.session_id,
+            engagement=self.engagement,
+            tool=tc.name,
+            args_hash=hash_arguments(tc.arguments),
+            approved=decision.allowed,
+            stage=decision.stage,
+            rule=decision.matched_rule,
+            is_error=result.is_error,
+            latency_ms=latency_ms,
+        )
+        if result.is_error and not decision.allowed:
+            # Refused calls are security-relevant — surface a dedicated
+            # event alongside tool.call so ``jq 'select(.event=="tool.error")'``
+            # picks them up even if the operator filters tool.call noise.
+            self.audit.emit(
+                "tool.error",
+                session_id=self.session_id,
+                engagement=self.engagement,
+                tool=tc.name,
+                reason=decision.reason,
+                rule=decision.matched_rule,
+            )
         tool_msg = Message(
             role=Role.TOOL,
             content=result.content,
@@ -129,9 +156,17 @@ class TurnLoop:
         options = options or TurnOptions()
         trace = TurnTrace()
         self.session.append(self.session_id, Message(role=Role.USER, content=user_input))
+        self.audit.emit(
+            "turn.start",
+            session_id=self.session_id,
+            engagement=self.engagement,
+            user_len=len(user_input),
+        )
 
         tools_specs = self.registry.specs()
         verifier_retries = 0
+        tokens_prompt = 0
+        tokens_completion = 0
 
         while trace.iterations < options.max_tool_iterations + options.max_verifier_retries + 4:
             trace.iterations += 1
@@ -140,10 +175,19 @@ class TurnLoop:
             resp = await self.provider.chat(messages, tools=tools_specs, tool_choice=options.tool_choice)
             latency_ms = int((time.perf_counter() - t0) * 1000)
             turn_meta = _usage_meta(resp.usage, latency_ms)
+            tokens_prompt += turn_meta["tokens_prompt"]
+            tokens_completion += turn_meta["tokens_completion"]
 
             if resp.stop_reason == "error":
                 trace.aborted = True
                 trace.abort_reason = resp.text[:200]
+                self.audit.emit(
+                    "provider.error",
+                    session_id=self.session_id,
+                    engagement=self.engagement,
+                    detail=trace.abort_reason,
+                )
+                self._emit_turn_end(trace, tokens_prompt, tokens_completion)
                 return trace
 
             if resp.tool_calls:
@@ -159,6 +203,7 @@ class TurnLoop:
                 if trace.tool_calls_made >= options.max_tool_iterations:
                     trace.aborted = True
                     trace.abort_reason = "tool-iteration budget exhausted"
+                    self._emit_turn_end(trace, tokens_prompt, tokens_completion)
                     return trace
                 continue
 
@@ -171,6 +216,7 @@ class TurnLoop:
                     Message(role=Role.ASSISTANT, content=draft, metadata=turn_meta),
                 )
                 trace.final_text = draft
+                self._emit_turn_end(trace, tokens_prompt, tokens_completion)
                 return trace
 
             verifier_retries += 1
@@ -184,4 +230,20 @@ class TurnLoop:
 
         trace.aborted = True
         trace.abort_reason = "outer loop budget exhausted"
+        self._emit_turn_end(trace, tokens_prompt, tokens_completion)
         return trace
+
+    def _emit_turn_end(self, trace: TurnTrace, tokens_prompt: int, tokens_completion: int) -> None:
+        event = "turn.aborted" if trace.aborted else "turn.complete"
+        self.audit.emit(
+            event,
+            session_id=self.session_id,
+            engagement=self.engagement,
+            iterations=trace.iterations,
+            tool_calls=trace.tool_calls_made,
+            verifier_rejections=trace.verifier_rejections,
+            tokens_prompt=tokens_prompt,
+            tokens_completion=tokens_completion,
+            abort_reason=trace.abort_reason,
+            final_len=len(trace.final_text),
+        )

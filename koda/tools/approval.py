@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Awaitable, Callable, Iterable
 
+from ..audit import AuditLogger, NullAuditLogger, hash_arguments
 from ..security.guardrails import (
     DEFAULT_RULES,
     GuardrailAction,
@@ -66,14 +67,38 @@ class ApprovalPolicy:
         *,
         rules: Iterable[GuardrailRule] = DEFAULT_RULES,
         scope: ScopePolicy | None = None,
+        audit: AuditLogger | NullAuditLogger | None = None,
     ) -> None:
         self.approvals_path = approvals_path
         self.auto_approve_threshold = auto_approve_threshold
         self.callback = callback
         self.rules = tuple(rules)
         self.scope = scope
+        self.audit = audit or NullAuditLogger()
         self._entries: dict[str, str] = {}
         self._load()
+
+    def _emit(self, request: ApprovalRequest, decision: "ApprovalDecision") -> None:
+        # Stage drives event name: allowed stages → approval.allowed,
+        # refusals get a narrower category so audit queries stay sharp.
+        if decision.allowed:
+            event = "approval.allowed"
+        elif decision.stage == "guardrail":
+            event = "approval.blocked"
+        elif decision.stage == "entry":
+            event = "approval.denied"
+        else:
+            event = "approval.refused"
+        self.audit.emit(
+            event,
+            engagement=request.engagement,
+            tool=request.tool_name,
+            risk=request.risk.value if hasattr(request.risk, "value") else str(request.risk),
+            args_hash=hash_arguments(request.arguments),
+            stage=decision.stage,
+            reason=decision.reason,
+            rule=decision.matched_rule,
+        )
 
     # --- Persistence of sticky per-tool decisions ---
 
@@ -108,12 +133,14 @@ class ApprovalPolicy:
         )
 
         if guardrail.action == GuardrailAction.BLOCK:
-            return ApprovalDecision(
+            decision = ApprovalDecision(
                 allowed=False,
                 reason=guardrail.reason,
                 stage="guardrail",
                 matched_rule=guardrail.matched_rule,
             )
+            self._emit(request, decision)
+            return decision
 
         effective_risk = request.risk
         if guardrail.action == GuardrailAction.ESCALATE:
@@ -121,43 +148,51 @@ class ApprovalPolicy:
 
         entry = self._entries.get(request.tool_name, "")
         if entry == "never":
-            return ApprovalDecision(
+            decision = ApprovalDecision(
                 allowed=False,
                 reason=f"{request.tool_name!r} is in the deny list.",
                 stage="entry",
             )
+            self._emit(request, decision)
+            return decision
 
         if entry == "always" and guardrail.action != GuardrailAction.ESCALATE:
             # A sticky 'always' approval does NOT override an escalation —
             # escalated calls always go to the human. Otherwise a single
             # "always" decision could laminate over every future risky
             # variant of the same tool.
-            return ApprovalDecision(
+            decision = ApprovalDecision(
                 allowed=True,
                 reason=f"{request.tool_name!r} preapproved by operator.",
                 stage="entry",
             )
+            self._emit(request, decision)
+            return decision
 
         if self._RISK_ORDER[effective_risk] <= self._RISK_ORDER[self.auto_approve_threshold]:
-            return ApprovalDecision(
+            decision = ApprovalDecision(
                 allowed=True,
                 reason=f"Risk {effective_risk.value} within auto-approve threshold.",
                 stage="threshold",
             )
+            self._emit(request, decision)
+            return decision
 
         if self.callback is None:
-            return ApprovalDecision(
+            decision = ApprovalDecision(
                 allowed=False,
                 reason="No interactive approver configured; refused by default.",
                 stage="callback",
                 matched_rule=guardrail.matched_rule,
             )
+            self._emit(request, decision)
+            return decision
 
         result = self.callback(request, guardrail)
         if hasattr(result, "__await__"):
             result = await result  # type: ignore[assignment]
         allowed = bool(result)
-        return ApprovalDecision(
+        decision = ApprovalDecision(
             allowed=allowed,
             reason=(
                 guardrail.reason or "Operator approved."
@@ -167,6 +202,8 @@ class ApprovalPolicy:
             stage="callback",
             matched_rule=guardrail.matched_rule,
         )
+        self._emit(request, decision)
+        return decision
 
     async def decide(self, request: ApprovalRequest) -> bool:
         """Backward-compatible boolean path used by the TurnLoop."""
