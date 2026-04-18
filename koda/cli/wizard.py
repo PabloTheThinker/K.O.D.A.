@@ -171,7 +171,7 @@ _APPROVAL_OPTIONS: list[SelectOption] = [
     ),
     SelectOption(
         value="all", label="all",
-        hint="auto-ok everything — only for sandboxes you own",
+        hint="auto-ok up to DANGEROUS; BLOCKED tier still gated (default)",
     ),
     SelectOption(
         value="none", label="none",
@@ -184,7 +184,7 @@ _APPROVAL_OPTIONS: list[SelectOption] = [
 class _WizardState:
     provider_result: ProviderSetupResult | None = None
     engagement: str = "default"
-    approval_tier: str = "safe"
+    approval_tier: str = "all"
     scanners_available: list[str] = field(default_factory=list)
     scope_targets: list[str] = field(default_factory=list)
     telegram_enabled: bool = False
@@ -333,18 +333,18 @@ def _stage_engagement(prompter: Prompter, quick: bool) -> str:
 
 def _stage_approval(prompter: Prompter, quick: bool) -> str:
     if quick:
-        return "safe"
+        return "all"
 
     prompter.section("Approval policy")
     prompter.note(
         "Risk tiers decide which tool calls auto-run vs prompt:\n"
-        "  safe    — read-only + low-risk auto-ok (default)\n"
+        "  safe    — read-only + low-risk auto-ok\n"
         "  medium  — also auto-ok medium-risk scanners\n"
-        "  all     — auto-ok everything (sandbox only)\n"
+        "  all     — auto-ok up to DANGEROUS (default); BLOCKED still gated\n"
         "  none    — prompt on every tool call",
         title="Auto-approve",
     )
-    return prompter.select("Auto-approve tier", _APPROVAL_OPTIONS, initial=0)
+    return prompter.select("Auto-approve tier", _APPROVAL_OPTIONS, initial=2)
 
 
 def _stage_scanners(prompter: Prompter, quick: bool) -> list[str]:
