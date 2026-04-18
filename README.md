@@ -32,6 +32,17 @@ Ask → Route → Tool-call → Ground → Respond
 
 Most agent frameworks are general-purpose. Security work isn't. When a user asks *"is my project safe?"* a general-purpose agent will often write a confident-looking report from thin air — fake CVEs, fake file paths, fake line numbers. K.O.D.A. treats every security claim as ungrounded until a tool has produced evidence for it.
 
+## What's inside
+
+- **Grounding verifier** — assistant text is checked against the tool transcript before it's allowed out.
+- **Approval gate** — risk-tiered per-tool decisions, scoped to the active engagement.
+- **Append-only audit log** — JSONL with `fsync` on security-relevant events, size-rotated.
+- **Tamper-evident evidence store** — SHA-256 content addressing + merkle chain per engagement, portable `tar.gz` bundles that reverify with stdlib only.
+- **Credential broker** — per-engagement vault with placeholder detection, cooldown on failure, and automatic redaction across transcripts, evidence, and audit.
+- **Local threat intel** — offline SQLite cache of CISA KEV, EPSS, CWE, NVD CVE. No network at query time.
+- **Findings correlation** — content-fingerprint dedup + KEV/EPSS/CVSS enrichment + severity upgrade on KEV hit.
+- **Scanner wrappers** — Semgrep, Trivy, Bandit, Gitleaks, Nuclei, OSV-Scanner, Nmap, Grype, plus a generic SARIF 2.1.0 reader.
+
 ## Install
 
 ```bash
@@ -65,9 +76,13 @@ koda                        # Start the interactive REPL
 | Claude CLI   | `claude` binary on `PATH`                          | CLI default           |
 | Ollama       | `http://127.0.0.1:11434` reachable                 | First model installed |
 
+## Engagements
+
+Every session is scoped to an engagement — a named boundary for a pentest, IR case, or audit. Sessions, credentials, evidence, and audit rows carry the engagement label. Set it via `KODA_ENGAGEMENT=acme-q2` before starting the REPL, or leave it default for personal use.
+
 ## Status
 
-Early. The harness, provider adapters, grounding verifier, approval gate, and the first security tools (`fs.list`, `fs.read`, `scan.run`) are live. Not production-ready. Expect breaking changes.
+Beta. The harness, provider adapters, grounding verifier, approval gate, credential broker, evidence store, threat-intel cache, and scanner wrappers are live and have end-to-end smoke coverage (`scripts/smoke.sh`). API surface is stabilizing; expect small breaking changes before 1.0.
 
 ## License
 
