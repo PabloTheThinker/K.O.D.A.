@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Hardened MCP server** — `koda mcp` over SSE now requires an
+  `Authorization: Bearer` token on every request (auto-generated on
+  first run, persisted to `mcp.toml` with 0600 perms). Optional mTLS via
+  `--tls-cert/--tls-key/--client-ca` flags. Stdio transport unchanged.
+  `--no-auth` refuses any non-loopback bind. Every auth attempt is
+  audit-logged (`mcp.auth.ok` / `mcp.auth.denied`).
 - **Remote evidence bundle sync** (`koda remote push|pull|list`) for
   S3-compatible object storage (AWS S3, Cloudflare R2, MinIO). Uploads
   a bundle plus a plain-text `.sha256` sidecar so pulls on a fresh

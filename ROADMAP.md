@@ -86,8 +86,10 @@ not promises — plans change when reality pushes back.
 - [x] **Remote bundles** — `koda remote push|pull|list` for
       S3-compatible storage (AWS S3, R2, MinIO) with `.sha256` sidecar
       integrity verification.
-- [~] **Hardened MCP** — OAuth bearer + optional mTLS on the SSE
-      transport. Stdio unchanged.
+- [x] **Hardened MCP** — `Authorization: Bearer` on the SSE transport
+      (auto-generated + persisted), optional mTLS via client-CA flag,
+      every auth attempt audit-logged. Stdio unchanged. `--no-auth`
+      refuses any non-loopback bind.
 - [ ] **Team mode.** Multi-operator engagements with per-operator audit
       trails and handoff. _Design input needed — scope TBD._
 
