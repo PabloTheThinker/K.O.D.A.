@@ -6,16 +6,23 @@ K.O.D.A. is a security-focused tool. We take vulnerabilities in the harness itse
 
 **Please do not open a public GitHub issue for security reports.**
 
-Email: **security@vektraindustries.com**
+K.O.D.A. is maintained by a solo developer. Until a dedicated disclosure
+address exists, the primary reporting channel is:
 
-Include:
+- **X (Twitter) DM:** [@pablothethinker](https://x.com/pablothethinker)
+- **GitHub private advisory:** [Report a vulnerability](https://github.com/PabloTheThinker/K.O.D.A./security/advisories/new)
+  (preferred for anything involving code or PoCs — GitHub's private
+  advisories let us collaborate on a fix before disclosure)
+
+Please include:
 - A description of the issue and its impact
 - Steps to reproduce (minimum viable reproducer preferred)
 - Affected versions / commit SHAs if known
 - Any proof-of-concept code, logs, or evidence bundles
 - Your name / handle for credit (optional)
 
-You can encrypt sensitive details with our PGP key on request.
+If you need to share sensitive material that shouldn't ride over X or
+GitHub, say so in your first message and we'll set up an encrypted channel.
 
 ## Response SLA
 
