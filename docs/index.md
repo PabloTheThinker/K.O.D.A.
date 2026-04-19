@@ -30,6 +30,6 @@ forensics without giving up operator control.
 
 ## Status
 
-Beta. Current release: **v0.4.0** (2026-04-19). See
+Beta. Current release: **v0.5.0** (2026-04-19). See
 [CHANGELOG](https://github.com/PabloTheThinker/K.O.D.A./blob/main/CHANGELOG.md)
 and [ROADMAP](https://github.com/PabloTheThinker/K.O.D.A./blob/main/ROADMAP.md).
