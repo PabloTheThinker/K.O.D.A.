@@ -139,9 +139,101 @@ def _cmd_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_engagement(args: argparse.Namespace) -> int:
+    """Generate a report for an existing engagement by name.
+
+    Looks up the engagement under ``KODA_HOME/engagements/<name>/``,
+    reads its findings (``findings.jsonl`` by convention), auto-fills
+    metadata from ``engagement.toml`` if present, and delegates to the
+    same generate path as ``koda report generate``.
+    """
+    from ..config import KODA_HOME
+
+    name = args.name
+    eng_dir = KODA_HOME / "engagements" / name
+    if not eng_dir.is_dir():
+        print(f"error: engagement '{name}' not found under {KODA_HOME/'engagements'}", file=sys.stderr)
+        return 1
+
+    findings_path = eng_dir / "findings.jsonl"
+    if not findings_path.exists():
+        print(
+            f"error: no findings at {findings_path}\n"
+            f"       write UnifiedFinding JSONL there, or point --findings at another file.",
+            file=sys.stderr,
+        )
+        return 1
+
+    meta = _read_engagement_meta(eng_dir)
+    out_dir = Path(args.out).expanduser() if args.out else (eng_dir / "reports")
+    findings = _load_findings(findings_path)
+    if not findings:
+        print("warning: no findings loaded — report will be empty", file=sys.stderr)
+
+    ctx = ReportContext(
+        engagement_id=args.engagement_id or meta.get("id") or f"ENG-{name}",
+        engagement_name=args.engagement_name or meta.get("name") or name,
+        scope=args.scope or meta.get("scope") or "(unspecified)",
+        operator=args.operator or meta.get("operator") or "operator",
+        started_at=args.started_at or meta.get("started_at") or "",
+        ended_at=args.ended_at or meta.get("ended_at") or "",
+        mode=args.mode or meta.get("mode") or "red",
+        targets=tuple(args.target or meta.get("targets") or ()),
+        client=args.client or meta.get("client") or "",
+        roe_id=args.roe_id or meta.get("roe_id") or "",
+    )
+
+    intel = _get_intel()
+    try:
+        outputs = generate(ctx, findings, intel, formats=_parse_formats(args.format))
+        paths = write_bundle(outputs, out_dir, basename=args.basename)
+    finally:
+        close = getattr(intel, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                pass
+
+    for fmt, path in sorted(paths.items()):
+        print(f"{fmt:<10}  {path}")
+    return 0
+
+
+def _read_engagement_meta(eng_dir: Path) -> dict[str, Any]:
+    """Best-effort read of engagement.toml; empty dict if absent/invalid."""
+    meta_path = eng_dir / "engagement.toml"
+    if not meta_path.exists():
+        return {}
+    try:
+        import tomllib
+        return tomllib.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"warning: could not parse {meta_path}: {exc}", file=sys.stderr)
+        return {}
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="koda report", description="Generate security reports.")
     sub = parser.add_subparsers(dest="subcommand")
+
+    eng = sub.add_parser("engagement", help="report for an engagement by name (auto-fills metadata)")
+    eng.add_argument("name", help="engagement name under KODA_HOME/engagements/")
+    eng.add_argument("--out", default="", help="output directory (default: <engagement>/reports)")
+    eng.add_argument("--format", default="executive,technical,markdown,sarif",
+                     help="comma-separated subset of: executive,technical,markdown,sarif")
+    eng.add_argument("--basename", default="report", help="output filename base (default: report)")
+    eng.add_argument("--engagement-id", dest="engagement_id", default="")
+    eng.add_argument("--engagement-name", dest="engagement_name", default="")
+    eng.add_argument("--scope", default="")
+    eng.add_argument("--operator", default="")
+    eng.add_argument("--started-at", dest="started_at", default="")
+    eng.add_argument("--ended-at", dest="ended_at", default="")
+    eng.add_argument("--mode", default="", choices=["", "red", "blue", "purple"])
+    eng.add_argument("--client", default="")
+    eng.add_argument("--roe-id", dest="roe_id", default="")
+    eng.add_argument("--target", action="append", help="repeatable target identifier")
+    eng.set_defaults(func=_cmd_engagement)
 
     gen = sub.add_parser("generate", help="generate executive/technical/markdown/SARIF reports")
     gen.add_argument("--findings", required=True, help="path to JSONL file of UnifiedFindings")

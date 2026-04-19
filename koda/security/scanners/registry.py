@@ -92,6 +92,9 @@ def detect_installed_scanners() -> dict[str, bool]:
         "osv-scanner": "osv-scanner",
         "nmap": "nmap",
         "grype": "grype",
+        "checkov": "checkov",
+        "kics": "kics",
+        "falco": "falco",
     }
     return {name: shutil.which(binary) is not None for name, binary in scanners.items()}
 
@@ -595,6 +598,249 @@ def run_grype(target: str, timeout: int = 300,
                       elapsed=elapsed, command=" ".join(cmd), exit_status=exit_status)
 
 
+def run_checkov(target: str, timeout: int = 300,
+                extra_args: list[str] | None = None) -> ScanResult:
+    """Run Checkov IaC misconfiguration scanner (Terraform, CF, K8s, Helm, Dockerfile)."""
+    start = time.monotonic()
+    cmd = ["checkov", "-d", target, "-o", "json", "--quiet"]
+    if extra_args:
+        cmd.extend(extra_args)
+
+    ok, stdout, stderr, code = _run_cmd(cmd, timeout=timeout)
+    elapsed = time.monotonic() - start
+
+    if not ok and code == -2:
+        return ScanResult(False, "checkov", error="checkov not installed", elapsed=elapsed,
+                          exit_status=ExitStatus.ERROR)
+
+    exit_status = classify_exit("checkov", code, stdout, stderr)
+    if exit_status == ExitStatus.CANCELED:
+        return ScanResult(False, "checkov", error="Scan canceled by user (SIGINT)",
+                          elapsed=elapsed, exit_status=ExitStatus.CANCELED)
+    if exit_status == ExitStatus.ERROR:
+        return ScanResult(False, "checkov",
+                          error=f"checkov exited with code {code}: {stderr[:500] or '(no stderr)'}",
+                          elapsed=elapsed, raw_output=stdout[:2000], exit_status=ExitStatus.ERROR)
+
+    findings: list[UnifiedFinding] = []
+    output = None
+    try:
+        # Checkov may emit a list of check-type result blocks or a single object.
+        raw = json.loads(stdout) if stdout.strip() else {}
+        # Normalise to a list — checkov wraps multi-type scans in a list.
+        blocks = raw if isinstance(raw, list) else [raw]
+        output = raw
+
+        for block in blocks:
+            check_results = block.get("results", {})
+            for result in check_results.get("failed_checks", []):
+                check = result.get("check_id", "")
+                resource = result.get("resource", "")
+                file_path = result.get("file_path", "")
+                file_line_range = result.get("file_line_range", [0, 0])
+                start_line = file_line_range[0] if file_line_range else 0
+                end_line = file_line_range[1] if len(file_line_range) > 1 else start_line
+                # Checkov doesn't expose per-check CVSS; use rule prefix to guess severity.
+                sev = Severity.MEDIUM
+                check_upper = check.upper()
+                if any(check_upper.startswith(p) for p in ("CKV_K8S_", "CKV2_")):
+                    sev = Severity.MEDIUM
+                if result.get("severity"):
+                    sev = Severity.from_str(result["severity"])
+                mitre: list[str] = []
+                guideline = result.get("guideline", "")
+                f = UnifiedFinding(
+                    id=UnifiedFinding.make_id("checkov", check, file_path, start_line),
+                    scanner="checkov",
+                    rule_id=check,
+                    severity=sev,
+                    title=result.get("check_type", check),
+                    description=result.get("check_id", ""),
+                    file_path=file_path,
+                    start_line=start_line,
+                    end_line=end_line,
+                    snippet=resource,
+                    category="iac-misconfiguration",
+                    mitre_attack=mitre,
+                    fix_suggestion=guideline,
+                    raw=result,
+                )
+                findings.append(f)
+    except (json.JSONDecodeError, KeyError) as e:
+        if exit_status == ExitStatus.SUCCESS:
+            return ScanResult(True, "checkov", output={}, findings=[],
+                              elapsed=elapsed, command=" ".join(cmd),
+                              exit_status=ExitStatus.SUCCESS)
+        return ScanResult(False, "checkov", error=f"Parse error: {e}",
+                          elapsed=elapsed, raw_output=stdout[:2000], exit_status=ExitStatus.ERROR)
+
+    return ScanResult(True, "checkov", output=output, findings=findings,
+                      elapsed=elapsed, command=" ".join(cmd), exit_status=exit_status)
+
+
+def run_kics(target: str, timeout: int = 300,
+             extra_args: list[str] | None = None) -> ScanResult:
+    """Run KICS IaC misconfiguration scanner (broader runtime/cloud coverage)."""
+    start = time.monotonic()
+    cmd = ["kics", "scan", "-p", target, "--report-formats", "json",
+           "--output-path", "/dev/stdout", "--no-progress"]
+    if extra_args:
+        cmd.extend(extra_args)
+
+    ok, stdout, stderr, code = _run_cmd(cmd, timeout=timeout)
+    elapsed = time.monotonic() - start
+
+    if not ok and code == -2:
+        return ScanResult(False, "kics", error="kics not installed", elapsed=elapsed,
+                          exit_status=ExitStatus.ERROR)
+
+    exit_status = classify_exit("kics", code, stdout, stderr)
+    if exit_status == ExitStatus.CANCELED:
+        return ScanResult(False, "kics", error="Scan canceled by user (SIGINT)",
+                          elapsed=elapsed, exit_status=ExitStatus.CANCELED)
+    if exit_status == ExitStatus.ERROR:
+        return ScanResult(False, "kics",
+                          error=f"kics exited with code {code}: {stderr[:500] or '(no stderr)'}",
+                          elapsed=elapsed, raw_output=stdout[:2000], exit_status=ExitStatus.ERROR)
+
+    findings: list[UnifiedFinding] = []
+    output = None
+    try:
+        output = json.loads(stdout) if stdout.strip() else {}
+        for query in output.get("queries", []):
+            query_id = query.get("query_id", "")
+            query_name = query.get("query_name", "")
+            severity_str = query.get("severity", "MEDIUM")
+            sev = Severity.from_str(severity_str)
+            category = query.get("category", "")
+            description = query.get("description", "")
+            # KICS places MITRE ATT&CK IDs in query.files[].expected_value or
+            # top-level query metadata; extract from description_id if present.
+            mitre: list[str] = []
+            cis_descriptions = query.get("cis_descriptions", []) or []
+            for cis in cis_descriptions:
+                mid = cis.get("id", "")
+                if mid:
+                    mitre.append(mid)
+
+            for file_result in query.get("files", []):
+                file_path = file_result.get("file_name", "")
+                line = file_result.get("line", 0)
+                issue_type = file_result.get("issue_type", "")
+                expected = file_result.get("expected_value", "")
+                actual = file_result.get("actual_value", "")
+                snippet = f"Expected: {expected}\nActual: {actual}" if expected or actual else ""
+                f = UnifiedFinding(
+                    id=UnifiedFinding.make_id("kics", query_id, file_path, line),
+                    scanner="kics",
+                    rule_id=query_id,
+                    severity=sev,
+                    title=query_name,
+                    description=description or issue_type,
+                    file_path=file_path,
+                    start_line=line,
+                    snippet=snippet,
+                    category=category,
+                    mitre_attack=mitre,
+                    raw=file_result,
+                )
+                findings.append(f)
+    except (json.JSONDecodeError, KeyError) as e:
+        if exit_status == ExitStatus.SUCCESS:
+            return ScanResult(True, "kics", output={}, findings=[],
+                              elapsed=elapsed, command=" ".join(cmd),
+                              exit_status=ExitStatus.SUCCESS)
+        return ScanResult(False, "kics", error=f"Parse error: {e}",
+                          elapsed=elapsed, raw_output=stdout[:2000], exit_status=ExitStatus.ERROR)
+
+    return ScanResult(True, "kics", output=output, findings=findings,
+                      elapsed=elapsed, command=" ".join(cmd), exit_status=exit_status)
+
+
+def run_falco(target: str, rules: str | None = None, timeout: int = 60,
+              extra_args: list[str] | None = None) -> ScanResult:
+    """Run Falco one-shot eBPF/runtime security scan (IR/hunt workflows).
+
+    Falco is normally a daemon; here we run it in one-shot mode via
+    ``falco -d`` (read from driver capture file) or ``falco --list`` for
+    rule enumeration.  Findings arrive as JSON lines on stdout; exit code
+    carries only success/error — never findings.
+    """
+    start = time.monotonic()
+    if target == "--list":
+        # Rule listing mode — useful for audit/hunt preparation.
+        cmd = ["falco", "--list", "-o", "json_output=true"]
+    else:
+        # One-shot trace-file mode (e.g. a .scap capture file).
+        cmd = ["falco", "-e", target, "-o", "json_output=true",
+               "-o", "json_include_output_property=true"]
+        if rules:
+            cmd += ["-r", rules]
+    if extra_args:
+        cmd.extend(extra_args)
+
+    ok, stdout, stderr, code = _run_cmd(cmd, timeout=timeout)
+    elapsed = time.monotonic() - start
+
+    if not ok and code == -2:
+        return ScanResult(False, "falco", error="falco not installed", elapsed=elapsed,
+                          exit_status=ExitStatus.ERROR)
+
+    exit_status = classify_exit("falco", code, stdout, stderr)
+    if exit_status == ExitStatus.CANCELED:
+        return ScanResult(False, "falco", error="Scan canceled by user (SIGINT)",
+                          elapsed=elapsed, exit_status=ExitStatus.CANCELED)
+    if exit_status == ExitStatus.ERROR:
+        return ScanResult(False, "falco",
+                          error=f"falco exited with code {code}: {stderr[:500] or '(no stderr)'}",
+                          elapsed=elapsed, raw_output=stdout[:2000], exit_status=ExitStatus.ERROR)
+
+    findings: list[UnifiedFinding] = []
+    # Falco emits one JSON object per line (JSONL); parse each line independently.
+    for line in stdout.strip().split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+            # Standard Falco JSON event shape:
+            # { "output": "...", "priority": "Warning", "rule": "...",
+            #   "time": "...", "output_fields": {...} }
+            priority = event.get("priority", "")
+            rule = event.get("rule", "")
+            output_msg = event.get("output", "")
+            output_fields = event.get("output_fields", {}) or {}
+            file_path = (output_fields.get("fd.name")
+                         or output_fields.get("container.name")
+                         or "")
+            # Map Falco priority strings → Severity
+            sev = Severity.from_str(priority) if priority else Severity.MEDIUM
+            tags: list[str] = event.get("tags", []) or []
+            # Extract MITRE tags (Falco uses "MITRE_..." tag naming convention)
+            mitre = [t for t in tags if t.upper().startswith("MITRE")]
+            f = UnifiedFinding(
+                id=UnifiedFinding.make_id("falco", rule, file_path,
+                                          hash(event.get("time", "")) & 0xFFFF),
+                scanner="falco",
+                rule_id=rule,
+                severity=sev,
+                title=rule,
+                description=output_msg,
+                file_path=file_path,
+                category="runtime",
+                mitre_attack=mitre,
+                raw=event,
+            )
+            findings.append(f)
+        except (json.JSONDecodeError, KeyError):
+            continue
+
+    # Falco: findings via stdout stream — exit_status stays SUCCESS even when
+    # events were emitted (no special "findings" exit code exists).
+    return ScanResult(True, "falco", output=findings, findings=findings,
+                      elapsed=elapsed, command=" ".join(cmd), exit_status=exit_status)
+
+
 def run_sarif_file(path: str) -> ScanResult:
     """Parse a SARIF file directly and extract findings."""
     start = time.monotonic()
@@ -623,6 +869,9 @@ _SCANNER_MAP: dict[str, Callable[..., ScanResult]] = {
     "osv-scanner": run_osv_scanner,
     "nmap": run_nmap,
     "grype": run_grype,
+    "checkov": run_checkov,
+    "kics": run_kics,
+    "falco": run_falco,
     "sarif": run_sarif_file,
 }
 

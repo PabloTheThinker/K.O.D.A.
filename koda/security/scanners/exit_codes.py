@@ -85,6 +85,44 @@ SCANNER_EXIT_POLICY: dict[str, dict[str, Any]] = {
         "findings_codes": set(),
         "error_codes": set(range(1, 256)) - {130},
     },
+    "checkov": {
+        # 0 = no violations; 1 = violations found (documented, exit-code-on-failure).
+        # 2 = config/parse error or invalid invocation.
+        # ref: https://www.checkov.io/2.Basics/CLI%20Command%20Reference.html
+        "findings_codes": {1},
+        "error_codes": {2},
+    },
+    "kics": {
+        # KICS uses a bitmask-style additive exit code scheme.
+        # Source: https://docs.kics.io/latest/results/#exit-status-codes
+        #   50 = files found (scan completed)
+        #   +0 = no issues           → 50
+        #   +1 = HIGH severity       → 50 | 1 = ?
+        # The documented codes (verbatim from KICS docs) are:
+        #   0  = no files found / scan not executed
+        #   50 = scan executed, no findings
+        #   20 = LOW severity findings
+        #   30 = MEDIUM severity findings (lower digit wins in severity ordering)
+        #   40 = HIGH severity findings
+        #   60 = CRITICAL severity findings (added in KICS 1.6+)
+        # These codes can be combined additively, e.g. HIGH+MEDIUM = 40+30 = 70.
+        # Assumption (documented here because the docs show additive examples):
+        #   Any code in {20, 30, 40, 60, 70, 50} where the scan ran is FINDINGS
+        #   if non-zero.  We treat every non-zero, non-error, non-130 code as
+        #   FINDINGS because the bitmask arithmetic makes exhaustive enumeration
+        #   impractical. Codes 1 and 2 are invocation/parse errors per KICS docs.
+        "findings_codes": {20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120},
+        "error_codes": {1, 2},
+    },
+    "falco": {
+        # Falco in one-shot mode (--list or -d with timeout) emits findings via
+        # stdout JSON stream, not via exit code.  Exit codes:
+        #   0  = clean execution (stream ended without runtime error)
+        #   non-zero = actual runtime / startup failure
+        # There are no "findings" exit codes — findings travel via stdout only.
+        "findings_codes": set(),
+        "error_codes": set(range(1, 256)) - {130},
+    },
 }
 
 # Universal constants applied *before* per-scanner policy is checked.

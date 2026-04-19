@@ -40,6 +40,7 @@ from ..wizard import (
     SelectOption,
     WizardCancelled,
     detect_anthropic_env_key,
+    detect_azure_openai_env_key,
     detect_claude_cli,
     detect_deepseek_env_key,
     detect_gemini_env_key,
@@ -52,8 +53,10 @@ from ..wizard import (
     detect_xai_env_key,
     save_secrets,
     setup_anthropic,
+    setup_azure_openai,
     setup_claude_cli,
     setup_gemini,
+    setup_llamacpp,
     setup_ollama,
     setup_openai_compat,
 )
@@ -158,6 +161,18 @@ _PROVIDER_OPTIONS: tuple[_ProviderOption, ...] = (
         detector=detect_mistral_env_key,
         detail_fn=lambda v: "key detected" if v else "no key",
     ),
+    _ProviderOption(
+        value="azure_openai", label="Azure OpenAI",
+        base_hint="Azure deployment — AZURE_OPENAI_API_KEY",
+        detector=detect_azure_openai_env_key,
+        detail_fn=lambda v: "key detected" if v else "no key",
+    ),
+    _ProviderOption(
+        value="llamacpp", label="llama.cpp (local)",
+        base_hint="local server — no API key needed",
+        detector=None,
+        detail_fn=None,
+    ),
 )
 
 
@@ -215,8 +230,12 @@ def _detect_available(prompter: Prompter) -> tuple[list[SelectOption], list[bool
 def _run_provider_setup(prompter: Prompter, provider_id: str) -> ProviderSetupResult:
     if provider_id == "anthropic":
         return setup_anthropic(prompter, existing_key=detect_anthropic_env_key())
+    if provider_id == "azure_openai":
+        return setup_azure_openai(prompter, existing_key=detect_azure_openai_env_key())
     if provider_id == "claude_cli":
         return setup_claude_cli(prompter)
+    if provider_id == "llamacpp":
+        return setup_llamacpp(prompter)
     if provider_id == "ollama":
         return setup_ollama(prompter)
     if provider_id == "gemini":

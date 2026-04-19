@@ -4,9 +4,11 @@ from __future__ import annotations
 from typing import Any
 
 from .anthropic_api import AnthropicAPIProvider
+from .azure_openai import AzureOpenAIProvider
 from .base import Message, Provider, ProviderResponse, Role, ToolCall, ToolChoice, ToolSpec
 from .claude_cli import ClaudeCLIProvider
 from .gemini import GeminiProvider
+from .llamacpp import LlamaCppProvider
 from .ollama import OllamaProvider
 from .openai_compat import OpenAICompatProvider
 
@@ -30,10 +32,14 @@ _OPENAI_COMPAT_ALIASES: tuple[str, ...] = (
 
 _DIRECT: dict[str, type[Provider]] = {
     "anthropic": AnthropicAPIProvider,
+    "azure_openai": AzureOpenAIProvider,
+    "azure": AzureOpenAIProvider,
     "claude_cli": ClaudeCLIProvider,
-    "ollama": OllamaProvider,
     "gemini": GeminiProvider,
     "google": GeminiProvider,
+    "llamacpp": LlamaCppProvider,
+    "llama_cpp": LlamaCppProvider,
+    "ollama": OllamaProvider,
 }
 
 # Friendly aliases for providers where the user might use a common name.
@@ -44,6 +50,7 @@ _ALIASES: dict[str, str] = {
     "google_gemini": "gemini",
     "googleai": "gemini",
     "grok": "xai",
+    "llama.cpp": "llamacpp",
 }
 
 
@@ -78,7 +85,9 @@ __all__ = [
     "ToolChoice",
     "ToolSpec",
     "AnthropicAPIProvider",
+    "AzureOpenAIProvider",
     "ClaudeCLIProvider",
+    "LlamaCppProvider",
     "OllamaProvider",
     "OpenAICompatProvider",
     "GeminiProvider",

@@ -101,6 +101,10 @@ def detect_mistral_env_key() -> str | None:
     return _first_env("MISTRAL_API_KEY")
 
 
+def detect_azure_openai_env_key() -> str | None:
+    return _first_env("AZURE_OPENAI_API_KEY")
+
+
 def detect_gemini_env_key() -> str | None:
     from pathlib import Path
     key = _first_env("GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENAI_API_KEY")
@@ -600,10 +604,167 @@ def setup_gemini(prompter: Prompter, *, existing_key: str | None = None) -> Prov
     )
 
 
+# ---------------------------------------------------------------------------
+# Azure OpenAI setup
+# ---------------------------------------------------------------------------
+
+_AZURE_DEPLOYMENT_MODELS = (
+    ("gpt-4o", "GPT-4o"),
+    ("gpt-4.1", "GPT-4.1"),
+    ("gpt-4o-mini", "GPT-4o mini — fast, cheap"),
+    ("gpt-4-turbo", "GPT-4 Turbo"),
+)
+
+_DEFAULT_AZURE_API_VERSION = "2024-08-01-preview"
+
+
+def setup_azure_openai(
+    prompter: Prompter,
+    *,
+    existing_key: str | None = None,
+) -> ProviderSetupResult:
+    """Wizard flow for Azure OpenAI deployments.
+
+    Prompts for endpoint, deployment name, api-version, and api-key.
+    """
+    prompter.section("Azure OpenAI")
+    prompter.note(
+        "Azure OpenAI requires a resource endpoint, deployment name,\n"
+        "api-version, and an api-key (not a Bearer token).\n"
+        "Keys are stored at ~/.koda/secrets.env (0600).",
+        title="Azure OpenAI",
+    )
+
+    def _validate_url(value: str) -> str | None:
+        if not value.startswith("https://"):
+            return "endpoint must start with https://"
+        return None
+
+    endpoint = prompter.text(
+        "Azure resource endpoint",
+        placeholder="https://my-resource.openai.azure.com",
+        validate=_validate_url,
+    )
+
+    deployment = prompter.text(
+        "Deployment name",
+        placeholder="gpt-4o",
+    )
+
+    api_version = prompter.text(
+        "API version",
+        default=_DEFAULT_AZURE_API_VERSION,
+        placeholder=_DEFAULT_AZURE_API_VERSION,
+    )
+
+    key = existing_key or detect_azure_openai_env_key() or ""
+    if key:
+        prompter.status(True, "API key detected from AZURE_OPENAI_API_KEY")
+    else:
+        key = prompter.password(
+            "Azure OpenAI api-key",
+            validate=_validate_api_key("", min_len=20),
+        )
+
+    quota = _configure_quota(prompter, scope_label="Azure OpenAI")
+    secrets: dict[str, str] = {}
+    if key and key != existing_key:
+        secrets["AZURE_OPENAI_API_KEY"] = key
+
+    return ProviderSetupResult(
+        provider_id="azure_openai",
+        provider_label="Azure OpenAI",
+        model=deployment,
+        config={
+            "endpoint": endpoint,
+            "deployment": deployment,
+            "api_version": api_version or _DEFAULT_AZURE_API_VERSION,
+        },
+        secrets=secrets,
+        quota=quota,
+    )
+
+
+# ---------------------------------------------------------------------------
+# llama.cpp server setup
+# ---------------------------------------------------------------------------
+
+
+def setup_llamacpp(prompter: Prompter) -> ProviderSetupResult:
+    """Wizard flow for a local llama.cpp server (``./server`` binary).
+
+    Prompts for host, port, optional bearer token, and an optional
+    cosmetic model label.
+    """
+    prompter.section("llama.cpp server (local)")
+    prompter.note(
+        "Point K.O.D.A. at a running llama.cpp server started with:\n"
+        "  ./server -m <model.gguf> --port 8080\n"
+        "The server exposes /v1/chat/completions in OpenAI-compatible mode.\n"
+        "Tool-call support depends on your build and loaded model.",
+        title="llama.cpp",
+    )
+
+    host = prompter.text(
+        "Server host",
+        default="127.0.0.1",
+        placeholder="127.0.0.1",
+    )
+
+    def _validate_port(value: str) -> str | None:
+        try:
+            n = int(value)
+        except ValueError:
+            return "enter a port number."
+        if not 1 <= n <= 65535:
+            return "port must be 1-65535."
+        return None
+
+    port_raw = prompter.text(
+        "Server port",
+        default="8080",
+        placeholder="8080",
+        validate=_validate_port,
+    )
+    port = int(port_raw or "8080")
+
+    api_key = prompter.password(
+        "Bearer token (blank if none)",
+        validate=lambda v: None,  # optional
+    )
+
+    model_label = prompter.text(
+        "Model label (cosmetic — blank to skip)",
+        default="",
+        placeholder="e.g. llama-3.1-8b-q4",
+    )
+
+    quota = _configure_quota(prompter, scope_label="llama.cpp")
+
+    cfg: dict[str, Any] = {"host": host, "port": port}
+    if model_label:
+        cfg["model"] = model_label
+
+    secrets: dict[str, str] = {}
+    if api_key:
+        secrets["LLAMACPP_API_KEY"] = api_key
+        cfg["api_key"] = api_key
+
+    return ProviderSetupResult(
+        provider_id="llamacpp",
+        provider_label="llama.cpp (local)",
+        model=model_label or "",
+        config=cfg,
+        secrets=secrets,
+        quota=quota,
+    )
+
+
 __all__ = [
     "QuotaSpec",
     "ProviderSetupResult",
     "detect_anthropic_env_key",
+    "detect_azure_openai_env_key",
     "detect_openai_env_key",
     "detect_groq_env_key",
     "detect_together_env_key",
@@ -615,7 +776,9 @@ __all__ = [
     "detect_claude_cli",
     "detect_ollama_models",
     "setup_anthropic",
+    "setup_azure_openai",
     "setup_claude_cli",
+    "setup_llamacpp",
     "setup_ollama",
     "setup_openai_compat",
     "setup_gemini",

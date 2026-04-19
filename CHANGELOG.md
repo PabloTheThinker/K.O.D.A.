@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Engagement templates** (`koda new --template pentest|ir|audit`) with
+  per-template defaults for approval tier, scanners, ATT&CK phases, and
+  report style. Writes `engagement.toml` under
+  `KODA_HOME/engagements/<name>/`. Sibling command `koda use <name>` sets
+  the active engagement.
+- **Report-by-engagement wrapper** — `koda report engagement <name>`
+  auto-fills `ReportContext` metadata from `engagement.toml` and reads
+  `findings.jsonl` from the engagement directory. Delegates to the same
+  generate/write_bundle path as `koda report generate`.
+- **Three new scanner wrappers**: Checkov (IaC), KICS (IaC), Falco
+  (runtime). KICS uses the additive severity-bitmask exit scheme;
+  Falco surfaces findings via stdout JSONL (no findings exit code).
+- **Two new provider adapters**: Azure OpenAI (default api-version
+  `2024-08-01-preview`) and llama.cpp (local `./server`-compatible
+  HTTP). Wired into the setup wizard and registry aliases.
+- Tests: +47 for scanners, +35 for engagement templates/CLI, +32 for
+  new adapters. **295 total passing**, ruff clean.
+
 ## [0.5.0] — 2026-04-19
 
 Distribution + hardening turn: PyPI, trust-path tests, scanner exit-code

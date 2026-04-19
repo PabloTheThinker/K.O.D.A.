@@ -12,12 +12,14 @@ Profile isolation pattern (ported from Hermes agent):
      containing the profile name.
 
 Subcommands:
-  koda                    start REPL (first run → setup wizard)
-  koda setup              (re)run setup wizard
-  koda doctor             show config + provider status
-  koda mcp                start MCP server
-  koda profile <cmd>      list|create|use|delete|show
-  koda -p <name> ...      run anything under a named profile
+  koda                        start REPL (first run → setup wizard)
+  koda setup                  (re)run setup wizard
+  koda doctor                 show config + provider status
+  koda mcp                    start MCP server
+  koda new --template <t> <n> scaffold a new engagement from a template
+  koda use <name>             activate an engagement
+  koda profile <cmd>          list|create|use|delete|show
+  koda -p <name> ...          run anything under a named profile
 """
 from __future__ import annotations
 
@@ -94,6 +96,44 @@ _apply_profile_override()
 _BANNER = r"""
   K.O.D.A. — Kinetic Operative Defense Agent
 """
+
+
+def _cmd_use(argv: list[str]) -> int:
+    """Activate a named engagement (writes active_engagement file)."""
+    from ..config import KODA_HOME
+
+    if not argv or argv[0] in {"-h", "--help"}:
+        print("usage: koda use <engagement-name>")
+        print()
+        print("  Writes <name> to KODA_HOME/active_engagement so the next")
+        print("  `koda` session picks it up automatically.")
+        print()
+        print("  koda use default   — reset to the default engagement")
+        return 0
+
+    name = argv[0]
+    active_file = KODA_HOME / "active_engagement"
+    eng_dir = KODA_HOME / "engagements" / name
+
+    if name != "default" and not eng_dir.is_dir():
+        print(
+            f"error: engagement {name!r} not found at {eng_dir}\n"
+            "       create it first with: koda new --template <template> <name>",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        KODA_HOME.mkdir(parents=True, exist_ok=True)
+        active_file.write_text(name + "\n", encoding="utf-8")
+    except OSError as exc:
+        print(f"error: could not write active_engagement: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"active engagement set to {name!r}")
+    if name != "default":
+        print(f"  path: {eng_dir}")
+    return 0
 
 
 def _load_secrets_env() -> None:
@@ -446,18 +486,21 @@ def main(argv: list[str] | None = None) -> int:
         print(_BANNER)
         print(f"K.O.D.A. {__version__}")
         print()
-        print("usage: koda                   start REPL (runs setup on first run)")
-        print("       koda setup             (re)run the setup wizard")
-        print("       koda doctor            show config + provider status")
-        print("       koda mcp               start MCP server (expose tools)")
-        print("       koda telegram          start the Telegram bridge daemon")
-        print("       koda intel <cmd>       sync | status | lookup | search threat intel")
-        print("       koda report <cmd>      generate | stats security reports")
-        print("       koda update            pull + install the latest release")
-        print("       koda uninstall         remove K.O.D.A. (interactive checklist)")
-        print("       koda profile <cmd>     list | create | use | delete | show")
-        print("       koda version           print version and exit")
-        print("       koda -p <name> ...     use a named profile for this command")
+        print("usage: koda                        start REPL (runs setup on first run)")
+        print("       koda setup                  (re)run the setup wizard")
+        print("       koda doctor                 show config + provider status")
+        print("       koda mcp                    start MCP server (expose tools)")
+        print("       koda telegram               start the Telegram bridge daemon")
+        print("       koda intel <cmd>            sync | status | lookup | search threat intel")
+        print("       koda report <cmd>           generate | stats security reports")
+        print("       koda new --template <t> <n> scaffold an engagement from a template")
+        print("       koda new --list-templates   list available templates")
+        print("       koda use <name>             activate an engagement")
+        print("       koda update                 pull + install the latest release")
+        print("       koda uninstall              remove K.O.D.A. (interactive checklist)")
+        print("       koda profile <cmd>          list | create | use | delete | show")
+        print("       koda version                print version and exit")
+        print("       koda -p <name> ...          use a named profile for this command")
         print()
         print("env: KODA_PROVIDER, KODA_MODEL, ANTHROPIC_API_KEY, KODA_HOME, KODA_DEFAULT_HOME")
         return 0
@@ -496,6 +539,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if argv and argv[0] == "uninstall":
         return _cmd_uninstall(argv[1:])
+
+    if argv and argv[0] == "new":
+        from .new import main as new_main
+        return new_main(argv[1:])
+
+    if argv and argv[0] == "use":
+        return _cmd_use(argv[1:])
 
     if argv and argv[0] in {"profile", "profiles"}:
         return _cmd_profile(argv[1:])
