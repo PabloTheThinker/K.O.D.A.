@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-04-19
+
+Distribution + hardening turn: PyPI, trust-path tests, scanner exit-code
+policy, expanded `doctor`, docs site.
+
+### Added
+- **PyPI distribution** as `koda-security` (the bare `koda` name is held
+  by an unrelated project on PyPI). Import name and CLI command are
+  unchanged. Release workflow (`.github/workflows/release.yml`) builds
+  wheel + sdist, runs `twine check`, publishes via OIDC Trusted
+  Publishing on `v*` tags (no API tokens stored), and auto-creates a
+  GitHub Release with notes extracted from this changelog.
+- **Docs site** (`mkdocs` + Material theme). Pages: index, install,
+  security model, skill packs. Deploys to GitHub Pages on push to
+  `main` via `.github/workflows/docs.yml`.
+- **Trust-path unit tests** (65): `auth.broker` (credential storage,
+  placeholder rejection, cooldown, redaction, engagement isolation),
+  `evidence.store` + `evidence.bundle` (SHA-256 addressing, merkle chain
+  verify, tamper detection, bundle roundtrip), `security.verifier`
+  (grounded vs ungrounded claims, CVE/CWE/CVSS recognition),
+  `tools.approval` (risk-tier enforcement, guardrail BLOCK overrides,
+  the escalation-overrides-allowlist invariant).
+- **Scanner exit-code classifier** (`koda/security/scanners/exit_codes.py`)
+  with `ExitStatus` enum (`SUCCESS | FINDINGS | CANCELED | ERROR`) and
+  per-scanner policy covering semgrep, gitleaks, bandit, osv-scanner,
+  grype, trivy, nuclei, and nmap. Non-zero exits that signal findings
+  (semgrep `1`, gitleaks `1`, bandit `1`, osv `1`) now surface as
+  `FINDINGS`, not errors. SIGINT (`130`) is classified as `CANCELED`.
+  +67 unit tests.
+- **Expanded `koda doctor`** — version string, provider table (with
+  default marker), skill pack registry state and load errors, active
+  engagement details (evidence count + audit log size), env/binary
+  checks. Status-glyph output stays skimmable.
+- `PYPI_SETUP.md` — first-time maintainer checklist for PyPI + Trusted
+  Publishing + GitHub Pages + first tagged release.
+
+### Fixed
+- Two pre-existing silent-swallow paths in scanner wrappers where exit
+  code 2+ would fall through to the parse path and either emit zero
+  findings or raise a JSON error that was swallowed. Now surfaces a
+  clear `ExitStatus.ERROR` with the raw stderr message.
+
 ## [0.4.0] — 2026-04-19
 
 Legacy-port turn: pre-filter, compressor, reflection, and agent-loop wiring.
@@ -149,7 +191,8 @@ Initial scaffold. Private development; no public release.
 - Three initial provider adapters (Ollama, Claude CLI, Anthropic).
 - Session store, turn loop, CLI entry, first-run setup wizard.
 
-[Unreleased]: https://github.com/PabloTheThinker/K.O.D.A./compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/PabloTheThinker/K.O.D.A./compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/PabloTheThinker/K.O.D.A./releases/tag/v0.5.0
 [0.4.0]: https://github.com/PabloTheThinker/K.O.D.A./releases/tag/v0.4.0
 [0.3.0]: https://github.com/PabloTheThinker/K.O.D.A./releases/tag/v0.3.0
 [0.2.0]: https://github.com/PabloTheThinker/K.O.D.A./releases/tag/v0.2.0

@@ -2,4 +2,4 @@
 
 Open-source security specialist harness by Vektra Industries.
 """
-__version__ = "0.4.0"
+__version__ = "0.5.0"
