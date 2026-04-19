@@ -1,0 +1,65 @@
+site_name: K.O.D.A.
+site_description: Open-source security specialist agent by Vektra Industries
+site_url: https://pablothethinker.github.io/K.O.D.A./
+repo_url: https://github.com/PabloTheThinker/K.O.D.A.
+repo_name: PabloTheThinker/K.O.D.A.
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - content.action.edit
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - search.suggest
+    - search.highlight
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Install: install.md
+  - Security model: security-model.md
+  - Skill packs: skills.md
+  - Contributing: https://github.com/PabloTheThinker/K.O.D.A./blob/main/CONTRIBUTING.md
+  - Roadmap: https://github.com/PabloTheThinker/K.O.D.A./blob/main/ROADMAP.md
+  - Changelog: https://github.com/PabloTheThinker/K.O.D.A./blob/main/CHANGELOG.md
+
+plugins:
+  - search
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/PabloTheThinker/K.O.D.A.
+    - icon: fontawesome/brands/x-twitter
+      link: https://x.com/pablothethinker

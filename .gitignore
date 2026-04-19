@@ -38,3 +38,4 @@ artifacts/
 
 # Dependencies
 node_modules/
+site/

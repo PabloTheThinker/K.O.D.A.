@@ -21,6 +21,7 @@ from typing import Any
 
 from ..findings import Severity, UnifiedFinding
 from ..sarif.parser import SarifLog
+from .exit_codes import ExitStatus, classify_exit
 
 logger = logging.getLogger("koda.security.scanners")
 
@@ -36,6 +37,7 @@ class ScanResult:
     elapsed: float = 0.0
     raw_output: str = ""         # Raw stdout for debugging
     command: str = ""            # The command that was run
+    exit_status: ExitStatus = ExitStatus.SUCCESS  # Normalized exit classification
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -44,6 +46,7 @@ class ScanResult:
             "finding_count": len(self.findings),
             "elapsed": round(self.elapsed, 2),
             "error": self.error,
+            "exit_status": self.exit_status.value,
         }
 
 
@@ -107,7 +110,17 @@ def run_semgrep(target: str, config: str = "auto", timeout: int = 300,
     elapsed = time.monotonic() - start
 
     if not ok and code == -2:
-        return ScanResult(False, "semgrep", error="semgrep not installed", elapsed=elapsed)
+        return ScanResult(False, "semgrep", error="semgrep not installed", elapsed=elapsed,
+                          exit_status=ExitStatus.ERROR)
+
+    exit_status = classify_exit("semgrep", code, stdout, stderr)
+    if exit_status == ExitStatus.CANCELED:
+        return ScanResult(False, "semgrep", error="Scan canceled by user (SIGINT)",
+                          elapsed=elapsed, exit_status=ExitStatus.CANCELED)
+    if exit_status == ExitStatus.ERROR:
+        return ScanResult(False, "semgrep",
+                          error=f"semgrep exited with code {code}: {stderr[:500] or '(no stderr)'}",
+                          elapsed=elapsed, raw_output=stdout[:2000], exit_status=ExitStatus.ERROR)
 
     findings = []
     output = None
@@ -139,10 +152,10 @@ def run_semgrep(target: str, config: str = "auto", timeout: int = 300,
     except (json.JSONDecodeError, KeyError) as e:
         if not findings:
             return ScanResult(False, "semgrep", error=f"Parse error: {e}",
-                              elapsed=elapsed, raw_output=stdout[:2000])
+                              elapsed=elapsed, raw_output=stdout[:2000], exit_status=ExitStatus.ERROR)
 
     return ScanResult(True, "semgrep", output=output, findings=findings,
-                      elapsed=elapsed, command=" ".join(cmd))
+                      elapsed=elapsed, command=" ".join(cmd), exit_status=exit_status)
 
 
 def run_trivy(target: str, scan_type: str = "fs", timeout: int = 300,
@@ -157,7 +170,17 @@ def run_trivy(target: str, scan_type: str = "fs", timeout: int = 300,
     elapsed = time.monotonic() - start
 
     if not ok and code == -2:
-        return ScanResult(False, "trivy", error="trivy not installed", elapsed=elapsed)
+        return ScanResult(False, "trivy", error="trivy not installed", elapsed=elapsed,
+                          exit_status=ExitStatus.ERROR)
+
+    exit_status = classify_exit("trivy", code, stdout, stderr)
+    if exit_status == ExitStatus.CANCELED:
+        return ScanResult(False, "trivy", error="Scan canceled by user (SIGINT)",
+                          elapsed=elapsed, exit_status=ExitStatus.CANCELED)
+    if exit_status == ExitStatus.ERROR:
+        return ScanResult(False, "trivy",
+                          error=f"trivy exited with code {code}: {stderr[:500] or '(no stderr)'}",
+                          elapsed=elapsed, raw_output=stdout[:2000], exit_status=ExitStatus.ERROR)
 
     findings = []
     output = None
@@ -187,10 +210,10 @@ def run_trivy(target: str, scan_type: str = "fs", timeout: int = 300,
     except (json.JSONDecodeError, KeyError) as e:
         if not findings:
             return ScanResult(False, "trivy", error=f"Parse error: {e}",
-                              elapsed=elapsed, raw_output=stdout[:2000])
+                              elapsed=elapsed, raw_output=stdout[:2000], exit_status=ExitStatus.ERROR)
 
     return ScanResult(True, "trivy", output=output, findings=findings,
-                      elapsed=elapsed, command=" ".join(cmd))
+                      elapsed=elapsed, command=" ".join(cmd), exit_status=exit_status)
 
 
 def run_gitleaks(target: str, timeout: int = 300,
@@ -206,12 +229,23 @@ def run_gitleaks(target: str, timeout: int = 300,
     elapsed = time.monotonic() - start
 
     if not ok and code == -2:
-        return ScanResult(False, "gitleaks", error="gitleaks not installed", elapsed=elapsed)
+        return ScanResult(False, "gitleaks", error="gitleaks not installed", elapsed=elapsed,
+                          exit_status=ExitStatus.ERROR)
+
+    exit_status = classify_exit("gitleaks", code, stdout, stderr)
+    if exit_status == ExitStatus.CANCELED:
+        return ScanResult(False, "gitleaks", error="Scan canceled by user (SIGINT)",
+                          elapsed=elapsed, exit_status=ExitStatus.CANCELED)
+    if exit_status == ExitStatus.ERROR:
+        return ScanResult(False, "gitleaks",
+                          error=f"gitleaks exited with code {code}: {stderr[:500] or '(no stderr)'}",
+                          elapsed=elapsed, raw_output=stdout[:2000], exit_status=ExitStatus.ERROR)
 
     findings = []
     output = None
     try:
-        # Gitleaks returns exit code 1 when leaks found — that's success for us
+        # exit_status SUCCESS (code 0)  → no leaks, stdout may be empty
+        # exit_status FINDINGS (code 1) → leaks reported on stdout as JSON
         output = json.loads(stdout) if stdout.strip() else []
         if isinstance(output, list):
             for leak in output:
@@ -233,15 +267,16 @@ def run_gitleaks(target: str, timeout: int = 300,
                 )
                 findings.append(f)
     except (json.JSONDecodeError, KeyError) as e:
-        # Exit code 0 with no output = no leaks found
-        if code == 0:
+        if exit_status == ExitStatus.SUCCESS:
+            # Exit code 0 with no parseable output = no leaks found
             return ScanResult(True, "gitleaks", output=[], findings=[],
-                              elapsed=elapsed, command=" ".join(cmd))
+                              elapsed=elapsed, command=" ".join(cmd),
+                              exit_status=ExitStatus.SUCCESS)
         return ScanResult(False, "gitleaks", error=f"Parse error: {e}",
-                          elapsed=elapsed, raw_output=stdout[:2000])
+                          elapsed=elapsed, raw_output=stdout[:2000], exit_status=ExitStatus.ERROR)
 
     return ScanResult(True, "gitleaks", output=output, findings=findings,
-                      elapsed=elapsed, command=" ".join(cmd))
+                      elapsed=elapsed, command=" ".join(cmd), exit_status=exit_status)
 
 
 def run_bandit(target: str, timeout: int = 300,
@@ -256,7 +291,17 @@ def run_bandit(target: str, timeout: int = 300,
     elapsed = time.monotonic() - start
 
     if not ok and code == -2:
-        return ScanResult(False, "bandit", error="bandit not installed", elapsed=elapsed)
+        return ScanResult(False, "bandit", error="bandit not installed", elapsed=elapsed,
+                          exit_status=ExitStatus.ERROR)
+
+    exit_status = classify_exit("bandit", code, stdout, stderr)
+    if exit_status == ExitStatus.CANCELED:
+        return ScanResult(False, "bandit", error="Scan canceled by user (SIGINT)",
+                          elapsed=elapsed, exit_status=ExitStatus.CANCELED)
+    if exit_status == ExitStatus.ERROR:
+        return ScanResult(False, "bandit",
+                          error=f"bandit exited with code {code}: {stderr[:500] or '(no stderr)'}",
+                          elapsed=elapsed, raw_output=stdout[:2000], exit_status=ExitStatus.ERROR)
 
     findings = []
     output = None
@@ -285,10 +330,10 @@ def run_bandit(target: str, timeout: int = 300,
     except (json.JSONDecodeError, KeyError) as e:
         if not findings:
             return ScanResult(False, "bandit", error=f"Parse error: {e}",
-                              elapsed=elapsed, raw_output=stdout[:2000])
+                              elapsed=elapsed, raw_output=stdout[:2000], exit_status=ExitStatus.ERROR)
 
     return ScanResult(True, "bandit", output=output, findings=findings,
-                      elapsed=elapsed, command=" ".join(cmd))
+                      elapsed=elapsed, command=" ".join(cmd), exit_status=exit_status)
 
 
 def run_nuclei(target: str, timeout: int = 300,
@@ -303,7 +348,17 @@ def run_nuclei(target: str, timeout: int = 300,
     elapsed = time.monotonic() - start
 
     if not ok and code == -2:
-        return ScanResult(False, "nuclei", error="nuclei not installed", elapsed=elapsed)
+        return ScanResult(False, "nuclei", error="nuclei not installed", elapsed=elapsed,
+                          exit_status=ExitStatus.ERROR)
+
+    exit_status = classify_exit("nuclei", code, stdout, stderr)
+    if exit_status == ExitStatus.CANCELED:
+        return ScanResult(False, "nuclei", error="Scan canceled by user (SIGINT)",
+                          elapsed=elapsed, exit_status=ExitStatus.CANCELED)
+    if exit_status == ExitStatus.ERROR:
+        return ScanResult(False, "nuclei",
+                          error=f"nuclei exited with code {code}: {stderr[:500] or '(no stderr)'}",
+                          elapsed=elapsed, raw_output=stdout[:2000], exit_status=ExitStatus.ERROR)
 
     findings = []
     for line in stdout.strip().split("\n"):
@@ -332,7 +387,7 @@ def run_nuclei(target: str, timeout: int = 300,
             continue
 
     return ScanResult(True, "nuclei", output=findings, findings=findings,
-                      elapsed=elapsed, command=" ".join(cmd))
+                      elapsed=elapsed, command=" ".join(cmd), exit_status=exit_status)
 
 
 def run_osv_scanner(target: str, timeout: int = 300,
@@ -347,7 +402,17 @@ def run_osv_scanner(target: str, timeout: int = 300,
     elapsed = time.monotonic() - start
 
     if not ok and code == -2:
-        return ScanResult(False, "osv-scanner", error="osv-scanner not installed", elapsed=elapsed)
+        return ScanResult(False, "osv-scanner", error="osv-scanner not installed", elapsed=elapsed,
+                          exit_status=ExitStatus.ERROR)
+
+    exit_status = classify_exit("osv-scanner", code, stdout, stderr)
+    if exit_status == ExitStatus.CANCELED:
+        return ScanResult(False, "osv-scanner", error="Scan canceled by user (SIGINT)",
+                          elapsed=elapsed, exit_status=ExitStatus.CANCELED)
+    if exit_status == ExitStatus.ERROR:
+        return ScanResult(False, "osv-scanner",
+                          error=f"osv-scanner exited with code {code}: {stderr[:500] or '(no stderr)'}",
+                          elapsed=elapsed, raw_output=stdout[:2000], exit_status=ExitStatus.ERROR)
 
     findings = []
     output = None
@@ -382,10 +447,10 @@ def run_osv_scanner(target: str, timeout: int = 300,
     except (json.JSONDecodeError, KeyError) as e:
         if not findings:
             return ScanResult(False, "osv-scanner", error=f"Parse error: {e}",
-                              elapsed=elapsed, raw_output=stdout[:2000])
+                              elapsed=elapsed, raw_output=stdout[:2000], exit_status=ExitStatus.ERROR)
 
     return ScanResult(True, "osv-scanner", output=output, findings=findings,
-                      elapsed=elapsed, command=" ".join(cmd))
+                      elapsed=elapsed, command=" ".join(cmd), exit_status=exit_status)
 
 
 def run_nmap(target: str, ports: str = "1-1000", timeout: int = 300,
@@ -400,7 +465,17 @@ def run_nmap(target: str, ports: str = "1-1000", timeout: int = 300,
     elapsed = time.monotonic() - start
 
     if not ok and code == -2:
-        return ScanResult(False, "nmap", error="nmap not installed", elapsed=elapsed)
+        return ScanResult(False, "nmap", error="nmap not installed", elapsed=elapsed,
+                          exit_status=ExitStatus.ERROR)
+
+    exit_status = classify_exit("nmap", code, stdout, stderr)
+    if exit_status == ExitStatus.CANCELED:
+        return ScanResult(False, "nmap", error="Scan canceled by user (SIGINT)",
+                          elapsed=elapsed, exit_status=ExitStatus.CANCELED)
+    if exit_status == ExitStatus.ERROR:
+        return ScanResult(False, "nmap",
+                          error=f"nmap exited with code {code}: {stderr[:500] or '(no stderr)'}",
+                          elapsed=elapsed, raw_output=stdout[:2000], exit_status=ExitStatus.ERROR)
 
     findings = []
     output = {}
@@ -445,10 +520,10 @@ def run_nmap(target: str, ports: str = "1-1000", timeout: int = 300,
         output = {"hosts": hosts}
     except ET.ParseError as e:
         return ScanResult(False, "nmap", error=f"XML parse error: {e}",
-                          elapsed=elapsed, raw_output=stdout[:2000])
+                          elapsed=elapsed, raw_output=stdout[:2000], exit_status=ExitStatus.ERROR)
 
     return ScanResult(True, "nmap", output=output, findings=findings,
-                      elapsed=elapsed, command=" ".join(cmd))
+                      elapsed=elapsed, command=" ".join(cmd), exit_status=exit_status)
 
 
 def run_grype(target: str, timeout: int = 300,
@@ -463,7 +538,17 @@ def run_grype(target: str, timeout: int = 300,
     elapsed = time.monotonic() - start
 
     if not ok and code == -2:
-        return ScanResult(False, "grype", error="grype not installed", elapsed=elapsed)
+        return ScanResult(False, "grype", error="grype not installed", elapsed=elapsed,
+                          exit_status=ExitStatus.ERROR)
+
+    exit_status = classify_exit("grype", code, stdout, stderr)
+    if exit_status == ExitStatus.CANCELED:
+        return ScanResult(False, "grype", error="Scan canceled by user (SIGINT)",
+                          elapsed=elapsed, exit_status=ExitStatus.CANCELED)
+    if exit_status == ExitStatus.ERROR:
+        return ScanResult(False, "grype",
+                          error=f"grype exited with code {code}: {stderr[:500] or '(no stderr)'}",
+                          elapsed=elapsed, raw_output=stdout[:2000], exit_status=ExitStatus.ERROR)
 
     findings = []
     output = None
@@ -504,10 +589,10 @@ def run_grype(target: str, timeout: int = 300,
     except (json.JSONDecodeError, KeyError) as e:
         if not findings:
             return ScanResult(False, "grype", error=f"Parse error: {e}",
-                              elapsed=elapsed, raw_output=stdout[:2000])
+                              elapsed=elapsed, raw_output=stdout[:2000], exit_status=ExitStatus.ERROR)
 
     return ScanResult(True, "grype", output=output, findings=findings,
-                      elapsed=elapsed, command=" ".join(cmd))
+                      elapsed=elapsed, command=" ".join(cmd), exit_status=exit_status)
 
 
 def run_sarif_file(path: str) -> ScanResult:

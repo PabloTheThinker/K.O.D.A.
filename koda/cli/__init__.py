@@ -821,26 +821,130 @@ def _strip_shell_path_lines(home, *, dry_run: bool) -> int:
 def _doctor() -> int:
     import shutil
 
+    from .. import __version__
     from ..config import CONFIG_PATH, KODA_HOME, config_exists, load_config
     from ..profiles import read_active_profile
 
     KODA_HOME.mkdir(parents=True, exist_ok=True)
     _load_secrets_env()
 
-    print(f"active:        {read_active_profile() or 'default'}")
-    print(f"KODA_HOME:     {KODA_HOME}")
-    print(f"config:        {CONFIG_PATH}  {'(found)' if config_exists() else '(missing — run: koda setup)'}")
-    print(f"SOUL.md:       {'found' if (KODA_HOME/'SOUL.md').exists() else 'missing'}")
-    print(f"secrets.env:   {'found' if (KODA_HOME/'secrets.env').exists() else 'missing'}")
+    ok, warn, err = "\u2713", "\u2022", "\u2717"
+
+    print(f"K.O.D.A. {__version__}")
+    print()
+    print("[profile]")
+    print(f"  {ok} active         {read_active_profile() or 'default'}")
+    print(f"  {ok} KODA_HOME      {KODA_HOME}")
+    print()
+    print("[config]")
     if config_exists():
-        cfg = load_config()
-        print(f"provider:      {cfg.get('default_provider', '(unset)')}")
-        providers = cfg.get("provider") or {}
-        for name, pc in providers.items():
-            print(f"  - {name}: {pc}")
-    print(f"anthropic_key: {'yes' if os.environ.get('ANTHROPIC_API_KEY') else 'no'}")
-    print(f"claude CLI:    {shutil.which('claude') or 'no'}")
+        print(f"  {ok} config         {CONFIG_PATH}")
+    else:
+        print(f"  {err} config         missing  \u2014 run: koda setup")
+    soul_mark = ok if (KODA_HOME / "SOUL.md").exists() else warn
+    secrets_mark = ok if (KODA_HOME / "secrets.env").exists() else warn
+    print(f"  {soul_mark} SOUL.md        {'found' if (KODA_HOME/'SOUL.md').exists() else 'missing'}")
+    print(f"  {secrets_mark} secrets.env    {'found' if (KODA_HOME/'secrets.env').exists() else 'missing'}")
+    print()
+
+    _doctor_providers(config_exists() and load_config() or {}, ok, warn, err)
+    print()
+    _doctor_skills(ok, warn, err)
+    print()
+    _doctor_engagement(KODA_HOME, ok, warn, err)
+    print()
+    _doctor_tools(ok, warn, shutil)
     return 0
+
+
+def _doctor_providers(cfg: dict, ok: str, warn: str, err: str) -> None:
+    print("[providers]")
+    default = cfg.get("default_provider")
+    providers = cfg.get("provider") or {}
+    if not providers:
+        print(f"  {warn} none configured \u2014 run: koda setup")
+        return
+    for name, pc in providers.items():
+        marker = ok if name == default else " "
+        model = (pc or {}).get("model", "(no model)")
+        tag = " [default]" if name == default else ""
+        print(f"  {marker} {name:<14} {model}{tag}")
+    if default and default not in providers:
+        print(f"  {err} default_provider '{default}' not in provider table")
+
+
+def _doctor_skills(ok: str, warn: str, err: str) -> None:
+    print("[skills]")
+    try:
+        from ..security.skills.registry import DEFAULT_REGISTRY
+        from ..skills.loader import SkillLoader
+    except Exception as exc:
+        print(f"  {err} loader unavailable: {exc}")
+        return
+
+    loader = SkillLoader()
+    try:
+        registered, errors = loader.register_all()
+    except Exception as exc:
+        print(f"  {err} skill pack registration crashed: {exc}")
+        return
+
+    total = len(DEFAULT_REGISTRY.all_skills())
+    builtin = total - registered
+    print(f"  {ok} total registered   {total} (builtin: {builtin}, external: {registered})")
+    if errors:
+        print(f"  {err} load errors        {len(errors)}")
+        for path, message in errors[:5]:
+            print(f"      - {path}: {message}")
+        if len(errors) > 5:
+            print(f"      \u2026 and {len(errors) - 5} more")
+    else:
+        print(f"  {ok} load errors        0")
+
+
+def _doctor_engagement(koda_home, ok: str, warn: str, err: str) -> None:
+    print("[engagement]")
+    active_file = koda_home / "active_engagement"
+    if not active_file.exists():
+        print(f"  {warn} active             none \u2014 run: koda setup")
+        return
+    try:
+        name = active_file.read_text().strip()
+    except Exception as exc:
+        print(f"  {err} active             unreadable: {exc}")
+        return
+    if not name:
+        print(f"  {warn} active             empty file")
+        return
+    print(f"  {ok} active             {name}")
+    eng_dir = koda_home / "engagements" / name
+    if not eng_dir.is_dir():
+        print(f"  {warn} directory          missing ({eng_dir})")
+        return
+    evidence_dir = eng_dir / "evidence"
+    audit_log = eng_dir / "audit.jsonl"
+    evidence_count = len(list(evidence_dir.glob("*"))) if evidence_dir.is_dir() else 0
+    audit_size = audit_log.stat().st_size if audit_log.exists() else 0
+    print(f"  {ok} evidence items     {evidence_count}")
+    print(f"  {ok} audit log          {audit_size} bytes")
+
+
+def _doctor_tools(ok: str, warn: str, shutil_mod) -> None:
+    print("[environment]")
+    keys = [
+        ("ANTHROPIC_API_KEY", "anthropic"),
+        ("OPENAI_API_KEY", "openai"),
+        ("GROQ_API_KEY", "groq"),
+        ("GEMINI_API_KEY", "gemini"),
+    ]
+    for env_var, label in keys:
+        mark = ok if os.environ.get(env_var) else warn
+        state = "set" if os.environ.get(env_var) else "unset"
+        print(f"  {mark} {label:<14} {state}")
+    for binary in ("claude", "ollama", "nmap", "semgrep", "trivy"):
+        path = shutil_mod.which(binary)
+        mark = ok if path else warn
+        print(f"  {mark} {binary:<14} {path or 'not found'}")
 
 
 if __name__ == "__main__":

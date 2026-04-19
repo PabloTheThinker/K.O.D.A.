@@ -63,8 +63,13 @@ not promises — plans change when reality pushes back.
 The goal: make K.O.D.A. trivially installable, and make the trust-critical
 paths covered by tests instead of hope.
 
-- [ ] **PyPI release.** Publish `koda` as a wheel so `pipx install koda`
-      and `uv tool install koda` work without a git clone. **help wanted**
+- [~] **PyPI release.** Distribution name `koda-security` (the bare `koda`
+      is taken on PyPI by an unrelated project); the `koda` import and CLI
+      command are unchanged. Publish workflow wired at
+      `.github/workflows/release.yml` — fires on `v*` tags and uses PyPI
+      Trusted Publishing (no secrets). Needs: register project on PyPI +
+      configure trusted publisher linking `PabloTheThinker/K.O.D.A.` /
+      `release.yml`. Then: `pipx install koda-security` works.
 - [ ] **Hosted docs.** Move long-form content out of the README into a
       docs site (mkdocs or similar). README becomes the router.
       **help wanted**

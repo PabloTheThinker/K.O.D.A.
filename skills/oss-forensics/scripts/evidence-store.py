@@ -21,11 +21,11 @@ Usage example:
   python3 evidence-store.py --store evidence.json export > evidence-table.md
 """
 
-import json
 import argparse
-import os
 import datetime
 import hashlib
+import json
+import os
 import sys
 
 EVIDENCE_TYPES = [
@@ -49,7 +49,7 @@ IOC_TYPES = [
 
 
 def _now_iso():
-    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds") + "Z"
+    return datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds") + "Z"
 
 
 def _sha256(content: str) -> str:
@@ -72,9 +72,9 @@ class EvidenceStore:
         }
         if os.path.exists(filepath):
             try:
-                with open(filepath, "r", encoding="utf-8") as f:
+                with open(filepath, encoding="utf-8") as f:
                     self.data = json.load(f)
-            except (json.JSONDecodeError, IOError) as e:
+            except (OSError, json.JSONDecodeError) as e:
                 print(f"Error loading evidence store '{filepath}': {e}", file=sys.stderr)
                 print("Hint: The file might be corrupted. Check for manual edits or syntax errors.", file=sys.stderr)
                 sys.exit(1)
