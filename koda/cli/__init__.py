@@ -518,10 +518,11 @@ def _cmd_update(argv: list[str]) -> int:
         print(f"unknown flag: {a}", file=sys.stderr)
         return 2
 
-    # Auto-detect install dir from sys.executable: {install}/.venv/bin/python
+    # Auto-detect install dir from sys.prefix (the venv root). Don't use
+    # sys.executable.resolve() — uv symlinks .venv/bin/python to system
+    # python, which would send us into /usr.
     if install_dir is None:
-        exe = Path(sys.executable).resolve()
-        candidate = exe.parent.parent.parent  # bin -> .venv -> {install}
+        candidate = Path(sys.prefix).parent  # .venv -> {install}
         if (candidate / ".source" / ".git").exists():
             install_dir = str(candidate)
 
@@ -589,10 +590,10 @@ def _cmd_uninstall(argv: list[str]) -> int:
     home = Path.home()
     koda_home = Path(os.environ.get("KODA_HOME", home / ".koda")).expanduser()
 
-    # Detect install dir from sys.executable (…/install/.venv/bin/python)
-    exe = Path(sys.executable).resolve()
+    # Detect install dir from sys.prefix (venv root). sys.executable.resolve()
+    # follows uv's symlink into /usr and loses the venv path.
     install_dir: Path | None = None
-    candidate = exe.parent.parent.parent
+    candidate = Path(sys.prefix).parent
     if (candidate / ".source" / ".git").exists() and (candidate / ".venv").exists():
         install_dir = candidate
 
