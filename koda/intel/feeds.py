@@ -29,10 +29,8 @@ import time
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
-import zipfile
 from dataclasses import dataclass
 from typing import Any
-
 
 _NVD_TARBALL_URL = (
     "https://github.com/CVEProject/cvelistV5/archive/refs/heads/main.tar.gz"

@@ -18,7 +18,6 @@ from typing import Any
 
 from ..findings import Severity, UnifiedFinding
 
-
 # Minimal static fallback so reports still render when intel DB is empty.
 # Keys are ATT&CK Enterprise technique IDs; values are (name, tactic_id,
 # tactic_name). Extend as needed — we don't try to ship the full corpus.

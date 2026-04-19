@@ -19,7 +19,6 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-
 # ATT&CK technique id → coarse tactic name. Only the majors — the
 # serializer falls back to just the technique tag when the tactic is
 # unknown.

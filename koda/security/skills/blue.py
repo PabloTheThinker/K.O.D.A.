@@ -18,7 +18,6 @@ from __future__ import annotations
 from koda.security.modes import SecurityMode
 from koda.security.skills.base import Skill
 
-
 # ---------------------------------------------------------------------------
 # 1. DEFENSE — real-time defensive posture.
 # ---------------------------------------------------------------------------

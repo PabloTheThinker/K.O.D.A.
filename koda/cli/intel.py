@@ -9,7 +9,6 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-from typing import Any
 
 from ..intel.feeds import (
     attack_for_cwe,
@@ -24,7 +23,6 @@ from ..intel.feeds import (
     sync_nvd,
 )
 from ..intel.store import ThreatIntel
-
 
 _CVE_RE = re.compile(r"^CVE-\d{4}-\d+$", re.IGNORECASE)
 _CWE_RE = re.compile(r"^CWE-\d+$", re.IGNORECASE)

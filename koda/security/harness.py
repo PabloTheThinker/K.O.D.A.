@@ -29,7 +29,6 @@ from koda.security.prompts import (
 from koda.security.roe import ROEDecision, ROEGate
 from koda.security.skills.registry import DEFAULT_REGISTRY, SkillRegistry
 
-
 _MODE_BANNERS: dict[SecurityMode, str] = {
     SecurityMode.RED: RED_MODE_BANNER,
     SecurityMode.BLUE: BLUE_MODE_BANNER,

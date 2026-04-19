@@ -18,7 +18,6 @@ from .writers import (
     technical_report,
 )
 
-
 _FORMATS: tuple[str, ...] = ("executive", "technical", "markdown", "sarif")
 
 

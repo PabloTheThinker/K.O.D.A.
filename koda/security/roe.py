@@ -27,7 +27,6 @@ from typing import Any
 
 from koda.security.modes import EngagementContext, SecurityMode
 
-
 # ---------------------------------------------------------------------------
 # Decision
 # ---------------------------------------------------------------------------

@@ -22,7 +22,6 @@ import shlex
 import subprocess
 from dataclasses import dataclass, field
 
-
 _MAX_EVIDENCE = 2048
 
 

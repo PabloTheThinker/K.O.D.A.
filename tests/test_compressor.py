@@ -1,7 +1,7 @@
 """Tests for the context compressor."""
 from __future__ import annotations
 
-from koda.session.compressor import ContextCompressor, ATTCK_RE, CVE_RE
+from koda.session.compressor import ATTCK_RE, CVE_RE, ContextCompressor
 
 
 def test_regexes_extract_anchors():

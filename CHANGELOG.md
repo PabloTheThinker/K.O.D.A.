@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-04-19
+
+Legacy-port turn: pre-filter, compressor, reflection, and agent-loop wiring.
+
 ### Added
 - **Guardian pre-filter** (`koda/security/guardian.py`) — cheap regex
   detector that runs before the LLM call and tool dispatch. Catches
@@ -25,12 +29,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of per-turn outcomes with pattern extraction (`recent_hint()`,
   `get_patterns()`) suitable for post-engagement retrospectives and
   light system-prompt nudges.
+- **TurnLoop wiring** — `TurnLoop(..., guardian=, reflection=,
+  compressor=)` are all optional. Guardian scans user input and every
+  tool call before the approval gate; blocks emit `guardian.block`
+  audit events and surface as refusal messages. Reflection records
+  every terminal turn. Compressor emits `session.compressed` events
+  when the transcript grows past 80% of budget.
 - **Two more built-in skill packs** ported from `koda-cli-legacy`:
   `log-analyzer` (blue/hunt, T1078/T1110/T1098 — journalctl auth triage)
   and `port-monitor` (blue/hunt, T1571/T1021/T1090 — listener drift
   detection).
 - Test suites: `test_guardian.py` (13 tests), `test_compressor.py` (6),
-  `test_reflection.py` (6) — 38 total with existing coverage.
+  `test_reflection.py` (6) — 38 total passing.
 
 ## [0.3.0] — 2026-04-19
 
@@ -139,6 +149,8 @@ Initial scaffold. Private development; no public release.
 - Three initial provider adapters (Ollama, Claude CLI, Anthropic).
 - Session store, turn loop, CLI entry, first-run setup wizard.
 
-[Unreleased]: https://github.com/PabloTheThinker/K.O.D.A./compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/PabloTheThinker/K.O.D.A./compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/PabloTheThinker/K.O.D.A./releases/tag/v0.4.0
+[0.3.0]: https://github.com/PabloTheThinker/K.O.D.A./releases/tag/v0.3.0
 [0.2.0]: https://github.com/PabloTheThinker/K.O.D.A./releases/tag/v0.2.0
 [0.1.0]: https://github.com/PabloTheThinker/K.O.D.A./releases/tag/v0.1.0

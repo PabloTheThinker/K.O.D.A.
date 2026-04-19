@@ -16,10 +16,10 @@ runs. The remaining surface is a self-contained dataclass.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterable
 
 
 @dataclass
@@ -43,7 +43,7 @@ class ReflectionEngine:
     ) -> None:
         """Append a single turn's outcome to the journal."""
         entry = {
-            "time": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "time": datetime.now(UTC).isoformat(timespec="seconds"),
             "success": bool(success),
             "tools": list(tools or []),
             "error": error,

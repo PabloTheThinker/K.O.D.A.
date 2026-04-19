@@ -25,9 +25,8 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-
 
 INJECTION_PATTERNS = (
     r"ignore\s+(all\s+)?previous",
@@ -150,7 +149,7 @@ class Guardian:
     def _log_incident(self, category: str, detail: str) -> None:
         self.incidents.append(
             {
-                "time": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "time": datetime.now(UTC).isoformat(timespec="seconds"),
                 "category": category,
                 "detail": detail[:300],
             }

@@ -20,7 +20,6 @@ from pathlib import Path
 from koda.security.skills.registry import DEFAULT_REGISTRY, SkillRegistry
 from koda.skills.pack import SkillPack, SkillPackError
 
-
 __all__ = ["SkillLoader", "load_default_packs"]
 
 

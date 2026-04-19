@@ -23,9 +23,8 @@ from collections import defaultdict
 from typing import Any
 
 from ..findings import Severity, UnifiedFinding
-from .attack_matrix import AttackCell, matrix_by_tactic
+from .attack_matrix import matrix_by_tactic
 from .bundle import ReportBundle
-
 
 _SEVERITY_ORDER: tuple[Severity, ...] = (
     Severity.CRITICAL,

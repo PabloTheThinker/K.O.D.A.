@@ -14,7 +14,6 @@ from ..findings import Severity, UnifiedFinding
 from .attack_matrix import AttackCell, build_matrix, coverage_summary
 from .context import ReportContext
 
-
 _SEVERITY_ORDER: tuple[Severity, ...] = (
     Severity.CRITICAL,
     Severity.HIGH,
