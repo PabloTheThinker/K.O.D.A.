@@ -241,6 +241,59 @@ async def _self_test(provider_id: str, provider_config: dict[str, Any]) -> tuple
         return False, f"{type(exc).__name__}: {exc}"
 
 
+def _apply_secrets_to_env(secrets: dict[str, str]) -> None:
+    # Adapters read keys from the process env, not the config dict. Push
+    # captured secrets in before verification so the ping hits the wire
+    # with the just-entered credentials.
+    for k, v in secrets.items():
+        if v:
+            os.environ[k] = v
+
+
+async def _verify_and_retry(
+    prompter: Prompter,
+    result: ProviderSetupResult,
+    provider_id: str,
+) -> ProviderSetupResult | None:
+    """Verify creds live; on failure offer retry / skip / abort.
+
+    Returns the (possibly re-captured) result, or None if the operator
+    aborts. Mirrors OpenClaw's test-before-save loop — fail fast before
+    we write bad config to disk.
+    """
+    current = result
+    while True:
+        _apply_secrets_to_env(current.secrets)
+        with prompter.progress(f"verifying {provider_id}") as p:
+            ok, detail = await _self_test(provider_id, current.merged_config())
+            p.stop(detail if ok else f"failed: {detail}")
+
+        if ok:
+            return current
+
+        prompter.note(
+            f"{detail}\n\n"
+            "Common causes: invalid key, wrong model id, network issue,\n"
+            "or the provider doesn't have access to the selected model.",
+            title="Provider unreachable",
+        )
+
+        choice = prompter.select(
+            "How would you like to proceed?",
+            [
+                SelectOption("retry", "retry", "re-enter credentials / re-pick model"),
+                SelectOption("skip", "skip", "save config anyway — fix later with `koda setup`"),
+                SelectOption("abort", "abort", "cancel setup entirely"),
+            ],
+            initial=0,
+        )
+        if choice == "skip":
+            return current
+        if choice == "abort":
+            return None
+        current = _run_provider_setup(prompter, provider_id)
+
+
 def _risk_ack(prompter: Prompter) -> bool:
     prompter.note(
         "K.O.D.A. executes real security tools against real targets.\n"
@@ -487,7 +540,7 @@ def _stage_scope(prompter: Prompter, quick: bool) -> list[str]:
 def _stage_provider(
     prompter: Prompter,
     quick: bool,
-) -> ProviderSetupResult:
+) -> ProviderSetupResult | None:
     options, present_flags = _detect_available(prompter)
     if quick:
         choice = _auto_pick_provider(options, present_flags)
@@ -498,7 +551,14 @@ def _stage_provider(
             0,
         )
         choice = prompter.select("Default provider", options, initial=initial)
-    return _run_provider_setup(prompter, choice)
+
+    result = _run_provider_setup(prompter, choice)
+
+    # Non-tty runs can't drive the retry prompt — just capture and move on.
+    if not prompter.tty:
+        return result
+
+    return asyncio.run(_verify_and_retry(prompter, result, choice))
 
 
 def _render_summary(
@@ -605,6 +665,9 @@ def run_setup_wizard(
             quick = False
 
         state.provider_result = _stage_provider(prompter, quick)
+        if state.provider_result is None:
+            prompter.outro("cancelled — provider verification aborted")
+            return {}
         state.engagement = _stage_engagement(prompter, quick)
         state.approval_tier = _stage_approval(prompter, quick)
         state.scanners_available = _stage_scanners(prompter, quick)
@@ -644,16 +707,6 @@ def run_setup_wizard(
     }
     save_config(config, path)
     prompter.status(True, f"wrote {path}")
-
-    if prompter.confirm("Run a self-test against the chosen provider?", default=True):
-        with prompter.progress(f"pinging {result.provider_id}") as p:
-            ok, detail = asyncio.run(_self_test(result.provider_id, result.merged_config()))
-            p.stop(detail if ok else f"failed: {detail}")
-        if not ok:
-            prompter.note(
-                "Config is written. Fix the provider and re-run `koda`.",
-                title="Self-test failed",
-            )
 
     _render_summary(prompter, state, path)
     prompter.outro("ready — start with: koda")
