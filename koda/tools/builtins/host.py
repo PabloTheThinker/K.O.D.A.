@@ -18,7 +18,6 @@ from typing import Any
 from ...security.runner import run_cmd, trim
 from ..registry import RiskLevel, Tool, ToolResult, register
 
-
 _FAILED_RE   = re.compile(r"Failed password for (?:invalid user )?(\S+) from (\S+)")
 _INVALID_RE  = re.compile(r"Invalid user (\S+) from (\S+)")
 _OPENED_BY_RE = re.compile(r"session opened for user (\S+) by (\S+)\(uid=")

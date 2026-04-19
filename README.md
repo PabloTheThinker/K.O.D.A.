@@ -63,26 +63,51 @@ koda setup
 ## Quick Start
 
 ```bash
-koda setup                  # Configure providers (Anthropic, Claude CLI, Ollama)
+koda setup                  # Configure providers + verify credentials live
 koda doctor                 # Verify config + provider status
 koda                        # Start the interactive REPL
+koda telegram               # Run the Telegram operator bridge
+koda update                 # Pull + install the latest release
+koda uninstall              # Interactive removal checklist (--dry-run supported)
 ```
 
 ## Providers
 
-| Provider     | How it's picked                                    | Model default         |
-|--------------|----------------------------------------------------|-----------------------|
-| Anthropic    | `ANTHROPIC_API_KEY` in env                         | `claude-sonnet-4-6`   |
-| Claude CLI   | `claude` binary on `PATH`                          | CLI default           |
-| Ollama       | `http://127.0.0.1:11434` reachable                 | First model installed |
+Eleven providers — local-first, BYO model. The wizard pings each candidate with a real chat roundtrip **before** writing config, so you know credentials work before the first engagement.
+
+| Provider       | Detect                                  | Key env                |
+|----------------|-----------------------------------------|------------------------|
+| Ollama         | `http://127.0.0.1:11434` reachable      | (none — local)         |
+| Claude CLI     | `claude` binary on `PATH`               | (none — CLI auth)      |
+| Anthropic      | `ANTHROPIC_API_KEY`                     | `ANTHROPIC_API_KEY`    |
+| OpenAI         | `OPENAI_API_KEY`                        | `OPENAI_API_KEY`       |
+| Google Gemini  | `GEMINI_API_KEY` / `GOOGLE_API_KEY`     | `GEMINI_API_KEY`       |
+| Groq           | `GROQ_API_KEY`                          | `GROQ_API_KEY`         |
+| Together AI    | `TOGETHER_API_KEY`                      | `TOGETHER_API_KEY`     |
+| OpenRouter     | `OPENROUTER_API_KEY`                    | `OPENROUTER_API_KEY`   |
+| DeepSeek       | `DEEPSEEK_API_KEY`                      | `DEEPSEEK_API_KEY`     |
+| xAI (Grok)     | `XAI_API_KEY` / `GROK_API_KEY`          | `XAI_API_KEY`          |
+| Mistral        | `MISTRAL_API_KEY`                       | `MISTRAL_API_KEY`      |
+
+On verification failure: retry with new creds, skip (save anyway), or abort.
 
 ## Engagements
 
 Every session is scoped to an engagement — a named boundary for a pentest, IR case, or audit. Sessions, credentials, evidence, and audit rows carry the engagement label. Set it via `KODA_ENGAGEMENT=acme-q2` before starting the REPL, or leave it default for personal use.
 
+## Remote Operations
+
+K.O.D.A. ships a **Telegram bridge** for running engagements from a phone. Configure via `koda setup` (Stage 8), then `koda telegram` runs a daemon that relays messages, approvals, and alerts to your chat. Slash commands (`/help`, `/status`, `/new`, `/model`, `/history`) work from both the REPL and Telegram with parity.
+
+An MCP server is also available: `koda mcp` exposes the scanner and evidence tools to any MCP-compatible client.
+
+## Security
+
+Found a vulnerability? **Do not open a public issue.** See [SECURITY.md](./SECURITY.md) for the disclosure channel and response SLA.
+
 ## Status
 
-Beta. The harness, provider adapters, grounding verifier, approval gate, credential broker, evidence store, threat-intel cache, and scanner wrappers are live and have end-to-end smoke coverage (`scripts/smoke.sh`). API surface is stabilizing; expect small breaking changes before 1.0.
+Beta. The harness, provider adapters (11), grounding verifier, approval gate, credential broker, evidence store, threat-intel cache, scanner wrappers (8), Telegram bridge, and MCP server are live and have end-to-end smoke coverage (`scripts/smoke.sh`). CI runs lint + install smoke on every push. API surface is stabilizing; expect small breaking changes before 1.0.
 
 ## License
 

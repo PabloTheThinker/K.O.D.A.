@@ -34,7 +34,7 @@ class TelegramNotifier:
         self.timeout = timeout
 
     @classmethod
-    def from_env(cls) -> "TelegramNotifier | None":
+    def from_env(cls) -> TelegramNotifier | None:
         token = os.environ.get("KODA_TELEGRAM_BOT_TOKEN", "").strip()
         chat = os.environ.get("KODA_TELEGRAM_CHAT_ID", "").strip()
         if not token or not chat:

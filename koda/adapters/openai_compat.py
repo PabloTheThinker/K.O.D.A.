@@ -28,7 +28,6 @@ import httpx
 
 from .base import Message, Provider, ProviderResponse, Role, ToolCall, ToolChoice, ToolSpec
 
-
 _ENDPOINTS: dict[str, str] = {
     "openai": "https://api.openai.com/v1",
     "groq": "https://api.groq.com/openai/v1",

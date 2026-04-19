@@ -26,7 +26,6 @@ import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 _PROFILE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
@@ -86,7 +85,7 @@ def get_active_profile_path() -> Path:
     return get_default_koda_root() / "active_profile"
 
 
-def get_subprocess_home(profile_home: Optional[Path] = None) -> Path:
+def get_subprocess_home(profile_home: Path | None = None) -> Path:
     """Return the isolated HOME for subprocess tool configs (git, ssh, npm)."""
     base = profile_home or Path(os.environ.get("KODA_HOME", get_default_koda_root()))
     return base / "home"
@@ -198,7 +197,7 @@ def list_profiles() -> list[ProfileInfo]:
 def create_profile(
     name: str,
     *,
-    clone_from: Optional[str] = None,
+    clone_from: str | None = None,
     clone_all: bool = False,
     clone_config: bool = False,
 ) -> Path:
@@ -214,7 +213,7 @@ def create_profile(
     if profile_dir.exists():
         raise FileExistsError(f"Profile {name!r} already exists at {profile_dir}")
 
-    source_dir: Optional[Path] = None
+    source_dir: Path | None = None
     if clone_from is not None or clone_all or clone_config:
         source = clone_from or "default"
         if source != "default":
@@ -298,7 +297,7 @@ def resolve_profile_env(profile_name: str) -> str:
     return str(profile_dir)
 
 
-def read_active_profile() -> Optional[str]:
+def read_active_profile() -> str | None:
     """Read the sticky profile name, if set. Returns None if none."""
     active = get_active_profile_path()
     if not active.exists():

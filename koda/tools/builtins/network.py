@@ -15,7 +15,7 @@ import os
 import socket
 import ssl
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from urllib import error as urlerror
 from urllib import parse as urlparse
@@ -23,7 +23,6 @@ from urllib import request as urlrequest
 
 from ...security.runner import run_cmd, trim
 from ..registry import RiskLevel, Tool, ToolResult, register
-
 
 _NMAP_MODES = {
     "fast":    ["-T4", "-F"],
@@ -73,7 +72,7 @@ async def _scan_one_port(host: str, port: int, timeout: int) -> tuple[int, str]:
         with contextlib.suppress(Exception):
             await writer.wait_closed()
         return port, "OPEN"
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return port, "FILTERED"
     except (ConnectionRefusedError, OSError):
         return port, "CLOSED"
@@ -149,8 +148,8 @@ async def _ssl_audit(host: str, port: int = 443) -> ToolResult:
 
     not_before = str(cert.get("notBefore") or "")
     not_after = str(cert.get("notAfter") or "")
-    expiry = datetime.fromtimestamp(ssl.cert_time_to_seconds(not_after), timezone.utc) if not_after else None
-    days = int((expiry - datetime.now(timezone.utc)).total_seconds() // 86400) if expiry else None
+    expiry = datetime.fromtimestamp(ssl.cert_time_to_seconds(not_after), UTC) if not_after else None
+    days = int((expiry - datetime.now(UTC)).total_seconds() // 86400) if expiry else None
     sans = [value for _, value in cert.get("subjectAltName", [])]
 
     lines = [

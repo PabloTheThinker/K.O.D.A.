@@ -13,11 +13,13 @@ from __future__ import annotations
 import json
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Callable, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .storage import HelixDB
@@ -29,7 +31,7 @@ HOOK_TIMEOUT_SECONDS = 30
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # ── Response Stages ────────────────────────────────────────────────
@@ -107,7 +109,7 @@ class Incident:
     detected_at: str = ""
     verdict: str = ""
     verified_at: str = ""
-    enrichment: Optional[ThreatEnrichment] = None
+    enrichment: ThreatEnrichment | None = None
     enriched_at: str = ""
     containment_actions: list[ContainmentAction] = field(default_factory=list)
     contained_at: str = ""
@@ -238,10 +240,10 @@ class ResponseChain:
     def __init__(
         self,
         db: HelixDB,
-        verify_hook: Optional[VerifyHook] = None,
-        enrich_hook: Optional[EnrichHook] = None,
-        contain_hook: Optional[ContainHook] = None,
-        report_hook: Optional[ReportHook] = None,
+        verify_hook: VerifyHook | None = None,
+        enrich_hook: EnrichHook | None = None,
+        contain_hook: ContainHook | None = None,
+        report_hook: ReportHook | None = None,
         auto_contain: bool = False,
         hook_timeout: float = HOOK_TIMEOUT_SECONDS,
     ):
@@ -380,7 +382,7 @@ class ResponseChain:
         incident.total_response_ms = elapsed
         self.db.update_incident(incident.to_storage_dict())
 
-    def get_incident(self, incident_id: str) -> Optional[Incident]:
+    def get_incident(self, incident_id: str) -> Incident | None:
         row = self.db.get_incident(incident_id)
         return Incident.from_storage_dict(row) if row else None
 

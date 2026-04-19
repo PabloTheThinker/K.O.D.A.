@@ -53,4 +53,8 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]
-ignore = ["E501"]
+# E501: line length handled by formatter, not linter
+# E702: compound statements intentional in argv/shift-idiom code
+# UP042: StrEnum migration deferred — semantics differ subtly
+# B905: zip() strict= is a style lift, not a correctness issue here
+ignore = ["E501", "E702", "UP042", "B905"]

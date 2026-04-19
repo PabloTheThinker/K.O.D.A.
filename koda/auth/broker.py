@@ -36,9 +36,10 @@ import os
 import re
 import threading
 import time
-from dataclasses import asdict, dataclass, field
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 # Values that look like placeholders. Rejected at store time.
 _PLACEHOLDER_PATTERNS: tuple[re.Pattern, ...] = (

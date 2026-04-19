@@ -333,8 +333,12 @@ async def _repl() -> int:
 
 def _cmd_profile(argv: list[str]) -> int:
     from ..profiles import (
-        create_profile, delete_profile, list_profiles,
-        profile_exists, read_active_profile, use_profile,
+        create_profile,
+        delete_profile,
+        list_profiles,
+        profile_exists,
+        read_active_profile,
+        use_profile,
     )
 
     if not argv or argv[0] in {"-h", "--help"}:
@@ -757,8 +761,6 @@ def _safe_read(path) -> str:
 
 def _strip_shell_path_lines(home, *, dry_run: bool) -> int:
     """Remove the '# K.O.D.A.' block the installer added to shell RC files."""
-    from pathlib import Path
-
     touched = 0
     for rc in (home / ".bashrc", home / ".zshrc", home / ".profile"):
         if not rc.exists():
@@ -799,6 +801,7 @@ def _strip_shell_path_lines(home, *, dry_run: bool) -> int:
 
 def _doctor() -> int:
     import shutil
+
     from ..config import CONFIG_PATH, KODA_HOME, config_exists, load_config
     from ..profiles import read_active_profile
 

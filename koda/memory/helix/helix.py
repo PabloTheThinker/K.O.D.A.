@@ -13,14 +13,17 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Optional
 
 from .alpha import Episode, EpisodicStore
 from .beta import Concept, SemanticStore
-from .entanglement import Conflict, ConsolidationResult, EntanglementProtocol
+from .entanglement import ConsolidationResult, EntanglementProtocol
 from .response_chain import (
-    ResponseChain, Incident, ThreatEnrichment, ContainmentAction,
-    VerifyHook, EnrichHook, ContainHook, ReportHook,
+    ContainHook,
+    EnrichHook,
+    Incident,
+    ReportHook,
+    ResponseChain,
+    VerifyHook,
 )
 from .storage import HelixDB
 
@@ -41,10 +44,10 @@ class Helix:
     def __init__(
         self,
         base_dir: Path,
-        verify_hook: Optional[VerifyHook] = None,
-        enrich_hook: Optional[EnrichHook] = None,
-        contain_hook: Optional[ContainHook] = None,
-        report_hook: Optional[ReportHook] = None,
+        verify_hook: VerifyHook | None = None,
+        enrich_hook: EnrichHook | None = None,
+        contain_hook: ContainHook | None = None,
+        report_hook: ReportHook | None = None,
         auto_contain: bool = False,
     ):
         self.base_dir = base_dir
@@ -88,7 +91,7 @@ class Helix:
         outcome: str = "",
         severity: str = "",
         metadata: dict | None = None,
-    ) -> Optional[Episode]:
+    ) -> Episode | None:
         episode = self.alpha.encode(
             event_type=event_type,
             content=content,
@@ -102,7 +105,7 @@ class Helix:
             self._respond(episode, metadata or {})
         return episode
 
-    def _respond(self, episode: Episode, metadata: dict) -> Optional[Incident]:
+    def _respond(self, episode: Episode, metadata: dict) -> Incident | None:
         try:
             incident = self.response_chain.respond(
                 incident_id=episode.id,
@@ -135,6 +138,7 @@ class Helix:
 
     def _hot_promote(self, episode: Episode) -> None:
         import hashlib
+
         from .beta import Concept
         from .entanglement import _now
 

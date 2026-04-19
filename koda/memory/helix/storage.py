@@ -8,13 +8,11 @@ connections, conflicts, incidents, embeddings.
 """
 from __future__ import annotations
 
-import json
 import logging
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger("helix.storage")
 
@@ -22,7 +20,7 @@ SCHEMA_VERSION = 1
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 class HelixDB:
@@ -242,7 +240,7 @@ class HelixDB:
                  d.get("metadata", "{}"), d["content_hash"]),
             )
 
-    def get_episode(self, episode_id: str) -> Optional[dict]:
+    def get_episode(self, episode_id: str) -> dict | None:
         row = self._conn.execute(
             "SELECT * FROM episodes WHERE id = ?", (episode_id,)
         ).fetchone()
@@ -253,7 +251,7 @@ class HelixDB:
         min_significance: float = 0.0, max_age_days: int = 90,
         limit: int = 20,
     ) -> list[dict]:
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+        cutoff = (datetime.now(UTC) - timedelta(days=max_age_days)).isoformat()
         conditions = ["timestamp >= ?"]
         params: list = [cutoff]
         if event_type:
@@ -291,7 +289,7 @@ class HelixDB:
         return [dict(r) for r in rows]
 
     def recent_episodes(self, hours: int = 24, limit: int = 50) -> list[dict]:
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        cutoff = (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
         rows = self._conn.execute(
             "SELECT * FROM episodes WHERE timestamp >= ? ORDER BY timestamp DESC LIMIT ?",
             (cutoff, limit),
@@ -347,7 +345,7 @@ class HelixDB:
             return excess
 
     def cluster_episodes(self, max_age_hours: int = 72, limit: int = 200) -> list[dict]:
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=max_age_hours)).isoformat()
+        cutoff = (datetime.now(UTC) - timedelta(hours=max_age_hours)).isoformat()
         rows = self._conn.execute(
             """SELECT * FROM episodes
                WHERE consolidated = 0 AND timestamp >= ?
@@ -372,7 +370,7 @@ class HelixDB:
         return {"total_episodes": total, "oldest": oldest, "newest": newest}
 
     def prune_episodes(self, min_significance: float = 0.01, max_age_days: int = 180) -> int:
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+        cutoff = (datetime.now(UTC) - timedelta(days=max_age_days)).isoformat()
         with self._tx() as c:
             cur = c.execute(
                 "DELETE FROM episodes WHERE timestamp < ? AND significance < ?",
@@ -397,7 +395,7 @@ class HelixDB:
                  d.get("decay_rate", 0.01), d.get("metadata", "{}")),
             )
 
-    def get_concept(self, concept_id: str) -> Optional[dict]:
+    def get_concept(self, concept_id: str) -> dict | None:
         row = self._conn.execute(
             "SELECT * FROM concepts WHERE id = ?", (concept_id,)
         ).fetchone()
@@ -534,7 +532,7 @@ class HelixDB:
                  d.get("resolution", ""), d.get("resolution_date", "")),
             )
 
-    def get_conflict(self, conflict_id: str) -> Optional[dict]:
+    def get_conflict(self, conflict_id: str) -> dict | None:
         row = self._conn.execute(
             "SELECT * FROM conflicts WHERE id = ?", (conflict_id,)
         ).fetchone()
@@ -586,7 +584,7 @@ class HelixDB:
                  d.get("closed_reason", ""), d.get("metadata", "{}")),
             )
 
-    def get_incident(self, incident_id: str) -> Optional[dict]:
+    def get_incident(self, incident_id: str) -> dict | None:
         row = self._conn.execute(
             "SELECT * FROM incidents WHERE id = ?", (incident_id,)
         ).fetchone()
@@ -630,7 +628,7 @@ class HelixDB:
             (item_id, item_type, embedding, updated),
         )
 
-    def get_embedding(self, item_id: str, item_type: str) -> Optional[bytes]:
+    def get_embedding(self, item_id: str, item_type: str) -> bytes | None:
         row = self._conn.execute(
             "SELECT embedding FROM embeddings WHERE item_id = ? AND item_type = ?",
             (item_id, item_type),

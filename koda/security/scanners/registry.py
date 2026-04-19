@@ -14,11 +14,12 @@ import shutil
 import subprocess
 import time
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
-from ..findings import UnifiedFinding, Severity
+from ..findings import Severity, UnifiedFinding
 from ..sarif.parser import SarifLog
 
 logger = logging.getLogger("koda.security.scanners")
@@ -31,7 +32,7 @@ class ScanResult:
     scanner: str
     output: Any = None           # Parsed JSON/dict output
     findings: list[UnifiedFinding] = field(default_factory=list)
-    error: Optional[str] = None
+    error: str | None = None
     elapsed: float = 0.0
     raw_output: str = ""         # Raw stdout for debugging
     command: str = ""            # The command that was run
@@ -56,7 +57,7 @@ def _scrubbed_env() -> dict[str, str]:
 def _run_cmd(
     cmd: list[str],
     timeout: int = 300,
-    cwd: Optional[str] = None,
+    cwd: str | None = None,
 ) -> tuple[bool, str, str, int]:
     """Run a command, return (success, stdout, stderr, exit_code)."""
     try:
@@ -95,7 +96,7 @@ def detect_installed_scanners() -> dict[str, bool]:
 # ── Scanner implementations ─────────────────────────────────────────
 
 def run_semgrep(target: str, config: str = "auto", timeout: int = 300,
-                extra_args: Optional[list[str]] = None) -> ScanResult:
+                extra_args: list[str] | None = None) -> ScanResult:
     """Run Semgrep SAST scanner."""
     start = time.monotonic()
     cmd = ["semgrep", "scan", "--json", "--config", config, target]
@@ -145,7 +146,7 @@ def run_semgrep(target: str, config: str = "auto", timeout: int = 300,
 
 
 def run_trivy(target: str, scan_type: str = "fs", timeout: int = 300,
-              extra_args: Optional[list[str]] = None) -> ScanResult:
+              extra_args: list[str] | None = None) -> ScanResult:
     """Run Trivy vulnerability scanner."""
     start = time.monotonic()
     cmd = ["trivy", scan_type, "--format", "json", "--quiet", target]
@@ -193,7 +194,7 @@ def run_trivy(target: str, scan_type: str = "fs", timeout: int = 300,
 
 
 def run_gitleaks(target: str, timeout: int = 300,
-                 extra_args: Optional[list[str]] = None) -> ScanResult:
+                 extra_args: list[str] | None = None) -> ScanResult:
     """Run Gitleaks secret detection scanner."""
     start = time.monotonic()
     cmd = ["gitleaks", "detect", "--source", target,
@@ -244,7 +245,7 @@ def run_gitleaks(target: str, timeout: int = 300,
 
 
 def run_bandit(target: str, timeout: int = 300,
-               extra_args: Optional[list[str]] = None) -> ScanResult:
+               extra_args: list[str] | None = None) -> ScanResult:
     """Run Bandit Python security linter."""
     start = time.monotonic()
     cmd = ["bandit", "-r", "-f", "json", target]
@@ -291,7 +292,7 @@ def run_bandit(target: str, timeout: int = 300,
 
 
 def run_nuclei(target: str, timeout: int = 300,
-               extra_args: Optional[list[str]] = None) -> ScanResult:
+               extra_args: list[str] | None = None) -> ScanResult:
     """Run Nuclei vulnerability scanner."""
     start = time.monotonic()
     cmd = ["nuclei", "-target", target, "-jsonl", "-silent"]
@@ -335,7 +336,7 @@ def run_nuclei(target: str, timeout: int = 300,
 
 
 def run_osv_scanner(target: str, timeout: int = 300,
-                    extra_args: Optional[list[str]] = None) -> ScanResult:
+                    extra_args: list[str] | None = None) -> ScanResult:
     """Run OSV-Scanner for known vulnerability detection."""
     start = time.monotonic()
     cmd = ["osv-scanner", "--format", "json", target]
@@ -388,7 +389,7 @@ def run_osv_scanner(target: str, timeout: int = 300,
 
 
 def run_nmap(target: str, ports: str = "1-1000", timeout: int = 300,
-             extra_args: Optional[list[str]] = None) -> ScanResult:
+             extra_args: list[str] | None = None) -> ScanResult:
     """Run Nmap network scanner."""
     start = time.monotonic()
     cmd = ["nmap", "-oX", "-", "-p", ports, target]
@@ -451,7 +452,7 @@ def run_nmap(target: str, ports: str = "1-1000", timeout: int = 300,
 
 
 def run_grype(target: str, timeout: int = 300,
-              extra_args: Optional[list[str]] = None) -> ScanResult:
+              extra_args: list[str] | None = None) -> ScanResult:
     """Run Grype vulnerability scanner (SBOM/image/directory)."""
     start = time.monotonic()
     cmd = ["grype", target, "-o", "json"]
@@ -546,7 +547,7 @@ class ScannerRegistry:
 
     def __init__(self):
         self._scanners = dict(_SCANNER_MAP)
-        self._installed: Optional[dict[str, bool]] = None
+        self._installed: dict[str, bool] | None = None
 
     def register(self, name: str, runner: Callable[..., ScanResult]) -> None:
         """Register a custom scanner."""
@@ -573,7 +574,7 @@ class ScannerRegistry:
         except Exception as e:
             return ScanResult(False, scanner, error=f"Runner error: {e}")
 
-    def run_all(self, target: str, scanners: Optional[list[str]] = None,
+    def run_all(self, target: str, scanners: list[str] | None = None,
                 **kwargs) -> list[ScanResult]:
         """Run multiple scanners against a target."""
         to_run = scanners or self.available()

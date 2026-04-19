@@ -37,9 +37,10 @@ import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 import zipfile
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 _KEV_URL = (
     "https://www.cisa.gov/sites/default/files/feeds/"
@@ -370,7 +371,7 @@ class ThreatIntel:
                     break
                 read += len(chunk)
                 if read > _DOWNLOAD_MAX_BYTES:
-                    raise IOError(f"feed exceeded {_DOWNLOAD_MAX_BYTES} bytes: {url}")
+                    raise OSError(f"feed exceeded {_DOWNLOAD_MAX_BYTES} bytes: {url}")
                 buf.write(chunk)
             return buf.getvalue()
 
@@ -388,7 +389,7 @@ class ThreatIntel:
             raw = self._download(_KEV_URL)
             data = json.loads(raw.decode("utf-8"))
             vulns = data.get("vulnerabilities") or []
-        except (urllib.error.URLError, IOError, json.JSONDecodeError) as exc:
+        except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
             return f"error: {exc}"
 
         iso = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + "Z"
@@ -426,7 +427,7 @@ class ThreatIntel:
         try:
             raw = self._download(_EPSS_URL)
             text = gzip.decompress(raw).decode("utf-8", errors="replace")
-        except (urllib.error.URLError, IOError, OSError) as exc:
+        except (urllib.error.URLError, OSError) as exc:
             return f"error: {exc}"
 
         reader = csv.reader(io.StringIO(text))
@@ -493,7 +494,7 @@ class ThreatIntel:
                 if not xml_names:
                     return "error: no xml in CWE bundle"
                 xml_bytes = zf.read(xml_names[0])
-        except (urllib.error.URLError, IOError, zipfile.BadZipFile) as exc:
+        except (OSError, urllib.error.URLError, zipfile.BadZipFile) as exc:
             return f"error: {exc}"
 
         try:

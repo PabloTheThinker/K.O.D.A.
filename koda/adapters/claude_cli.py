@@ -14,7 +14,7 @@ import logging
 import shutil
 from typing import Any
 
-from .base import Message, Provider, ProviderResponse, Role, ToolCall, ToolChoice, ToolSpec
+from .base import Message, Provider, ProviderResponse, Role, ToolChoice, ToolSpec
 
 _log = logging.getLogger(__name__)
 _warned_once: bool = False
@@ -92,7 +92,7 @@ class ClaudeCLIProvider(Provider):
                 text="Claude CLI not found. Install with `npm i -g @anthropic-ai/claude-code` or choose a different provider.",
                 stop_reason="error",
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return ProviderResponse(text="Claude CLI call timed out.", stop_reason="timeout")
 
         if proc.returncode != 0:

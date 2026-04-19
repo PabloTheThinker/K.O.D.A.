@@ -26,9 +26,10 @@ import json
 import os
 import threading
 import time
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 # Events flagged as "fsync worthy" — a crash right after one of these
 # must not lose the record. Approvals and refusals are load-bearing
@@ -208,7 +209,7 @@ class AuditLogger:
             )
         )
 
-    def __enter__(self) -> "AuditLogger":
+    def __enter__(self) -> AuditLogger:
         return self
 
     def __exit__(self, *_exc: Any) -> None:

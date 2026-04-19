@@ -15,7 +15,6 @@ from ...security.findings import FindingStore, Severity
 from ...security.scanners.registry import ScannerRegistry
 from ..registry import RiskLevel, Tool, ToolResult, register
 
-
 _finding_store: FindingStore | None = None
 
 

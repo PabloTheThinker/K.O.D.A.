@@ -13,8 +13,8 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta, timezone
-from typing import Optional, TYPE_CHECKING
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 from .alpha import Episode, EpisodicStore
 from .beta import Concept, SemanticStore
@@ -26,7 +26,7 @@ logger = logging.getLogger("helix.entanglement")
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # ── Conflict Model ─────────────────────────────────────────────────
@@ -204,7 +204,6 @@ class EntanglementProtocol:
 
     def _contradicts(self, episode: Episode, concept: Concept) -> bool:
         ep_lower = episode.content.lower()
-        concept_lower = concept.description.lower()
 
         negation_signals = ["not ", "no longer", "incorrect", "wrong", "false",
                            "failed", "disproved", "contradicts", "opposite"]
@@ -340,7 +339,6 @@ class EntanglementProtocol:
 
     def stats(self) -> dict:
         rows = self.db.active_conflicts()
-        all_rows = rows  # active only for now
         active = len(rows)
         total_row = self.db._conn.execute("SELECT COUNT(*) FROM conflicts").fetchone()
         total = total_row[0] if total_row else 0

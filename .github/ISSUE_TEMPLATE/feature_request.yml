@@ -1,0 +1,29 @@
+name: Feature request
+description: Propose a new capability, scanner, provider, or workflow
+title: "[feat] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What operator workflow is awkward or missing today? Lead with the pain, not the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would the command, flag, or flow look like? Concrete examples welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you tried, other tools that solve this, or prior art.
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Engagement type, team size, compliance regime, anything that sharpens the ask.

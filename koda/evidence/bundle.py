@@ -70,7 +70,6 @@ def export_bundle(store: EvidenceStore, engagement: str, out_path: Path | str) -
                 continue
             arcname = f"artifacts/{a.artifact_id}{Path(a.path).suffix}"
             tar.add(src, arcname=arcname)
-            meta = src.with_suffix(src.suffix + "")  # placeholder, replaced below
             sidecar = src.parent / f"{a.artifact_id}.meta.json"
             if sidecar.exists():
                 tar.add(sidecar, arcname=f"artifacts/{a.artifact_id}.meta.json")

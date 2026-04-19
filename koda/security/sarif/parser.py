@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from ..findings import Severity, UnifiedFinding
 
@@ -135,7 +135,7 @@ class SarifResult:
     properties: dict[str, Any] = field(default_factory=dict)
 
     # Populated during normalization from the run's rule definitions
-    _rule: Optional[SarifRule] = field(default=None, repr=False)
+    _rule: SarifRule | None = field(default=None, repr=False)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> SarifResult:

@@ -24,9 +24,10 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from ..adapters import create_provider
 from ..adapters.base import Message, Role

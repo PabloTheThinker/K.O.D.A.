@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import List, Tuple
 
 __all__ = [
     "UngroundedClaim",
@@ -49,15 +48,15 @@ def _normalize_cvss(text: str) -> str:
     return f"CVSS {m.group(1)}" if m else text.strip()
 
 
-def _code_fence_spans(text: str) -> List[Tuple[int, int]]:
-    spans: List[Tuple[int, int]] = []
+def _code_fence_spans(text: str) -> list[tuple[int, int]]:
+    spans: list[tuple[int, int]] = []
     starts = list(re.finditer(r"```", text))
     for i in range(0, len(starts) - 1, 2):
         spans.append((starts[i].start(), starts[i + 1].end()))
     return spans
 
 
-def _in_spans(start: int, end: int, spans: List[Tuple[int, int]]) -> bool:
+def _in_spans(start: int, end: int, spans: list[tuple[int, int]]) -> bool:
     return any(start >= s and end <= e for s, e in spans)
 
 
@@ -67,8 +66,8 @@ def _near_tool_result(text: str, start: int, end: int, window: int = 40) -> bool
     return "tool_result" in text[lo:hi].lower()
 
 
-def _extract_claims(draft: str) -> List[UngroundedClaim]:
-    claims: List[UngroundedClaim] = []
+def _extract_claims(draft: str) -> list[UngroundedClaim]:
+    claims: list[UngroundedClaim] = []
     fence_spans = _code_fence_spans(draft)
 
     for kind, pattern in _PATTERNS:
@@ -85,7 +84,7 @@ def _extract_claims(draft: str) -> List[UngroundedClaim]:
             claims.append(UngroundedClaim(kind=kind, value=value, span=(start, end)))
 
     claims.sort(key=lambda c: (c.span[0], c.span[1], c.kind))
-    deduped: List[UngroundedClaim] = []
+    deduped: list[UngroundedClaim] = []
     seen = set()
     for c in claims:
         key = (c.kind, c.value, c.span)

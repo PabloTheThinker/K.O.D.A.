@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .telegram import TelegramNotifier, TelegramResult
+from .telegram import TelegramNotifier
 
 _OFFSET_FILE_NAME = "telegram_offset"
 _APPROVAL_TIMEOUT_SECONDS = 120
@@ -134,7 +134,7 @@ class _ApprovalBroker:
                 self._message_id = result.data.get("message_id")
             try:
                 return await asyncio.wait_for(fut, timeout=self.timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 if self._message_id is not None:
                     self.notifier.edit_message_text(
                         self._message_id,

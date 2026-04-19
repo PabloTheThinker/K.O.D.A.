@@ -10,8 +10,8 @@ import json
 import logging
 import re
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta, timezone
-from typing import Optional, TYPE_CHECKING
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .storage import HelixDB
@@ -20,7 +20,7 @@ logger = logging.getLogger("helix.alpha")
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # ── Significance Scoring ──────────────────────────────────────────
@@ -126,7 +126,7 @@ class EpisodicStore:
         outcome: str = "",
         severity: str = "",
         metadata: dict | None = None,
-    ) -> Optional[Episode]:
+    ) -> Episode | None:
         sig = score_significance(event_type, severity, content)
         if sig < SIGNIFICANCE_THRESHOLD:
             return None

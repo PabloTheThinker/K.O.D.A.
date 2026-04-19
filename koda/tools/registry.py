@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import inspect
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from ..adapters.base import ToolSpec
 

@@ -24,10 +24,10 @@ import hashlib
 import logging
 import re
 import sqlite3
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from collections.abc import Iterable
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterable
 
 from .helix.embeddings import (
     cosine_similarity,
@@ -90,7 +90,7 @@ def _extract_keywords(text: str, limit: int = 30) -> list[str]:
 
 
 def _drawer_id(source_file: str, chunk_ix: int, content: str) -> str:
-    h = hashlib.sha1(f"{source_file}:{chunk_ix}:{content}".encode("utf-8"))
+    h = hashlib.sha1(f"{source_file}:{chunk_ix}:{content}".encode())
     return h.hexdigest()[:16]
 
 
@@ -206,7 +206,7 @@ class DrawerStore:
             return {"file": src, "chunks": 0, "skipped": True}
 
         chunks = _chunk_text(text)
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
 
         self.conn.execute("BEGIN IMMEDIATE")
         try:

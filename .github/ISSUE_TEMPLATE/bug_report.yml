@@ -1,0 +1,83 @@
+name: Bug report
+description: Report a defect in the K.O.D.A. harness, installer, or scanner wrappers
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. For **security vulnerabilities**, please do not open a public issue — see [SECURITY.md](../SECURITY.md) for the disclosure channel.
+  - type: input
+    id: version
+    attributes:
+      label: K.O.D.A. version
+      description: Output of `koda --version` or commit SHA if installed from source
+      placeholder: "0.2.0 or f43dfc8"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux (Ubuntu / Debian)
+        - Linux (Fedora / RHEL)
+        - Linux (Arch)
+        - Linux (other)
+        - macOS (Intel)
+        - macOS (Apple Silicon)
+        - WSL
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Active provider
+      options:
+        - Anthropic
+        - Claude CLI
+        - Ollama
+        - OpenAI
+        - Gemini
+        - Groq
+        - Together
+        - OpenRouter
+        - DeepSeek
+        - xAI (Grok)
+        - Mistral
+        - Not provider-specific / N/A
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened
+      description: Describe the bug and what you expected to happen instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Minimum steps to reproduce — command, config, and input if relevant.
+      placeholder: |
+        1. Run `koda setup`
+        2. Select ...
+        3. See error ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / output
+      description: Paste relevant output. Redact any API keys or target identifiers first.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission
+      options:
+        - label: I have redacted all API keys, credentials, and target-identifying info
+          required: true
+        - label: This is not a security vulnerability (those go to security@vektraindustries.com)
+          required: true

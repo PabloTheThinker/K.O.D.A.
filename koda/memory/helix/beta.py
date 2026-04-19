@@ -10,8 +10,8 @@ import hashlib
 import json
 import logging
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
-from typing import Optional, TYPE_CHECKING
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .storage import HelixDB
@@ -20,7 +20,7 @@ logger = logging.getLogger("helix.beta")
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # ── Connection (Edge in Concept Graph) ────────────────────────────
@@ -141,7 +141,7 @@ class SemanticStore:
 
     def __init__(self, db: HelixDB):
         self.db = db
-        self._embedding_available: Optional[bool] = None
+        self._embedding_available: bool | None = None
 
     def _check_embeddings(self) -> bool:
         if self._embedding_available is None:
@@ -174,7 +174,7 @@ class SemanticStore:
         logger.info("Added concept [%s]: %s", concept.id, concept.title)
         return concept
 
-    def get(self, concept_id: str) -> Optional[Concept]:
+    def get(self, concept_id: str) -> Concept | None:
         row = self.db.get_concept(concept_id)
         if not row:
             return None
@@ -204,7 +204,7 @@ class SemanticStore:
                         query_vec, candidates, top_k=10, min_score=threshold
                     )
                     results = []
-                    for cid, score in matches:
+                    for cid, _score in matches:
                         concept = self.get(cid)
                         if concept:
                             results.append(concept)

@@ -30,7 +30,6 @@ import httpx
 
 from .base import Message, Provider, ProviderResponse, Role, ToolCall, ToolChoice, ToolSpec
 
-
 _DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
 

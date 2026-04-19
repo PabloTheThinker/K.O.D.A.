@@ -23,10 +23,11 @@ import json
 import sqlite3
 import time
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from ..adapters.base import Message, Role, ToolCall
 
@@ -388,7 +389,7 @@ class SessionStore:
         """
         if not query.strip():
             return []
-        fts_clauses: list[str] = [f"message_search MATCH ?"]
+        fts_clauses: list[str] = ["message_search MATCH ?"]
         params: list[Any] = [query]
         if tool_name:
             fts_clauses.append("message_search.tool_name = ?")

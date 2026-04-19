@@ -9,10 +9,10 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
 class Severity(str, Enum):
@@ -98,8 +98,8 @@ class UnifiedFinding:
     status: FindingStatus = FindingStatus.NEW
     validated: bool = False           # Confirmed by validation agent
     validation_notes: str = ""
-    first_seen: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    last_seen: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    first_seen: datetime = field(default_factory=lambda: datetime.now(UTC))
+    last_seen: datetime = field(default_factory=lambda: datetime.now(UTC))
     raw: dict[str, Any] = field(default_factory=dict)
 
     @staticmethod
@@ -159,7 +159,7 @@ class UnifiedFinding:
 class FindingStore:
     """Persistent store for findings with dedup and query."""
 
-    def __init__(self, store_path: Optional[Path] = None):
+    def __init__(self, store_path: Path | None = None):
         self._findings: dict[str, UnifiedFinding] = {}
         self._fingerprints: dict[str, str] = {}  # fingerprint -> finding_id
         self.store_path = store_path
@@ -172,7 +172,7 @@ class FindingStore:
         if fp in self._fingerprints:
             existing_id = self._fingerprints[fp]
             existing = self._findings[existing_id]
-            existing.last_seen = datetime.now(timezone.utc)
+            existing.last_seen = datetime.now(UTC)
             # Upgrade severity if new scan found higher
             if finding.severity.numeric > existing.severity.numeric:
                 existing.severity = finding.severity
@@ -182,15 +182,15 @@ class FindingStore:
         self._fingerprints[fp] = finding.id
         return True, finding.id
 
-    def get(self, finding_id: str) -> Optional[UnifiedFinding]:
+    def get(self, finding_id: str) -> UnifiedFinding | None:
         return self._findings.get(finding_id)
 
     def query(
         self,
-        severity: Optional[Severity] = None,
-        scanner: Optional[str] = None,
-        status: Optional[FindingStatus] = None,
-        file_path: Optional[str] = None,
+        severity: Severity | None = None,
+        scanner: str | None = None,
+        status: FindingStatus | None = None,
+        file_path: str | None = None,
         validated_only: bool = False,
     ) -> list[UnifiedFinding]:
         """Query findings with filters."""

@@ -18,9 +18,9 @@ Every decision carries a reason so the session transcript records
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable, Iterable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Awaitable, Callable, Iterable
 
 from ..audit import AuditLogger, NullAuditLogger, hash_arguments
 from ..security.guardrails import (
@@ -97,7 +97,7 @@ class ApprovalPolicy:
         self._entries: dict[str, str] = {}
         self._load()
 
-    def _emit(self, request: ApprovalRequest, decision: "ApprovalDecision") -> None:
+    def _emit(self, request: ApprovalRequest, decision: ApprovalDecision) -> None:
         # Stage drives event name: allowed stages → approval.allowed,
         # refusals get a narrower category so audit queries stay sharp.
         if decision.allowed:

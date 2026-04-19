@@ -11,7 +11,6 @@ import logging
 import math
 import struct
 import urllib.request
-from typing import Optional
 
 logger = logging.getLogger("helix.embeddings")
 
@@ -20,7 +19,7 @@ MODEL = "nomic-embed-text"
 DIMS = 768
 
 
-def embed_text(text: str, timeout: float = 10.0) -> Optional[list[float]]:
+def embed_text(text: str, timeout: float = 10.0) -> list[float] | None:
     """Get embedding vector from Ollama. Returns None if unavailable."""
     if not text.strip():
         return None
