@@ -7,6 +7,7 @@ graceful error handling.
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import os
@@ -14,7 +15,8 @@ import shutil
 import subprocess
 import time
 import xml.etree.ElementTree as ET
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -59,12 +61,42 @@ def _scrubbed_env() -> dict[str, str]:
                        ("SECRET", "TOKEN", "KEY", "PASSWORD", "CREDENTIAL", "AUTH"))}
 
 
+# Remote-replay override: when set, _run_cmd returns the supplied
+# (success, stdout, stderr, rc) tuple without spawning a subprocess.
+# Used by koda.remote.executor to replay captured remote output through
+# the same parser a local invocation would use. ContextVar keeps the
+# override thread-local and async-safe, and the contextmanager below is
+# the only supported way to set it.
+_RUN_CMD_OVERRIDE: contextvars.ContextVar[tuple[bool, str, str, int] | None] = (
+    contextvars.ContextVar("_RUN_CMD_OVERRIDE", default=None)
+)
+
+
+@contextmanager
+def replay_run_cmd(stdout: str, stderr: str, exit_code: int) -> Iterator[None]:
+    """Temporarily make ``_run_cmd`` return the supplied output.
+
+    Any scanner runner called inside this block will skip the subprocess
+    and parse the supplied stdout/stderr/rc as if the command had just
+    been executed. Intended for remote scanning, where the command runs
+    on another host and only the captured output returns locally.
+    """
+    token = _RUN_CMD_OVERRIDE.set((exit_code == 0, stdout, stderr, exit_code))
+    try:
+        yield
+    finally:
+        _RUN_CMD_OVERRIDE.reset(token)
+
+
 def _run_cmd(
     cmd: list[str],
     timeout: int = 300,
     cwd: str | None = None,
 ) -> tuple[bool, str, str, int]:
     """Run a command, return (success, stdout, stderr, exit_code)."""
+    override = _RUN_CMD_OVERRIDE.get()
+    if override is not None:
+        return override
     try:
         r = subprocess.run(
             cmd,

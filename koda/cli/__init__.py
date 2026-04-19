@@ -493,9 +493,13 @@ def main(argv: list[str] | None = None) -> int:
         print("       koda telegram               start the Telegram bridge daemon")
         print("       koda intel <cmd>            sync | status | lookup | search threat intel")
         print("       koda report <cmd>           generate | stats security reports")
+        print("       koda audit --preset <n>     run a mission preset end-to-end")
+        print("       koda audit --list-presets   list all available mission presets")
         print("       koda new --template <t> <n> scaffold an engagement from a template")
         print("       koda new --list-templates   list available templates")
         print("       koda use <name>             activate an engagement")
+        print("       koda scan remote <target>   scan a remote host over SSH (ControlMaster)")
+        print("       koda schedule add|list|run  scheduled monitoring + diff alerts")
         print("       koda remote push|pull|list  sync evidence bundles to/from S3/R2/MinIO")
         print("       koda update                 pull + install the latest release")
         print("       koda uninstall              remove K.O.D.A. (interactive checklist)")
@@ -535,6 +539,10 @@ def main(argv: list[str] | None = None) -> int:
         from .report import main as report_main
         return report_main(argv[1:])
 
+    if argv and argv[0] == "audit":
+        from .audit import main as audit_main
+        return audit_main(argv[1:])
+
     if argv and argv[0] == "update":
         return _cmd_update(argv[1:])
 
@@ -554,6 +562,14 @@ def main(argv: list[str] | None = None) -> int:
     if argv and argv[0] == "remote":
         from .remote import main as remote_main
         return remote_main(argv[1:])
+
+    if argv and argv[0] == "scan":
+        from .scan import main as scan_main
+        return scan_main(argv[1:])
+
+    if argv and argv[0] == "schedule":
+        from .schedule import main as schedule_main
+        return schedule_main(argv[1:])
 
     return asyncio.run(_repl())
 

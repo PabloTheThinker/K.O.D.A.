@@ -50,7 +50,10 @@ nav:
   - Install: install.md
   - Security model: security-model.md
   - Skill packs: skills.md
+  - Audit presets: audit-presets.md
   - Remote bundles: remote-bundles.md
+  - Remote scanning: remote-scanning.md
+  - Continuous monitoring: continuous-monitoring.md
   - MCP hardening: mcp-hardened.md
   - Compatibility: compatibility.md
   - Contributing: https://github.com/PabloTheThinker/K.O.D.A./blob/main/CONTRIBUTING.md

@@ -80,9 +80,27 @@ not promises — plans change when reality pushes back.
 - [x] **Report generation** — `koda report engagement <name>` auto-fills
       metadata from `engagement.toml` and renders the evidence chain to
       executive / technical / markdown / SARIF.
+- [x] **Mission presets** — `koda audit --preset <name>` translates a
+      security outcome into a scanner composition, runs it end-to-end,
+      and exits 0/1 based on HIGH/CRITICAL findings. Five presets ship:
+      `server-hardening`, `web-app`, `pci-readiness`, `post-breach`,
+      `sbom-scan`. Approval-tier enforcement, `--dry-run`, `--skip-scanner`,
+      per-scanner arg overrides, Dependency-Track optional integration.
+      `PRESET_SCHEMA_VERSION = 1`. Docs: `docs/audit-presets.md`.
 
 ### v0.7 — Multi-Operator
 
+- [x] **Scheduled monitoring** — `koda schedule add|list|remove|run|history|diff`
+      registers cron/systemd user timer entries (no daemon). Diff-based alerts:
+      new / resolved / persistent by fingerprint. Channels: file, telegram, email,
+      webhook. `--alert-on findings|change|empty`. Run artifacts (findings.jsonl +
+      meta.toml) persisted per tick. Schema-versioned schedule records.
+      Docs: `docs/continuous-monitoring.md`.
+- [x] **Remote SSH scanning** — `koda scan remote <ssh-target>` runs any
+      scanner against a remote box over ControlMaster-multiplexed OpenSSH.
+      Static Go binaries auto-uploaded; Python-package scanners require
+      pre-installation. `--sudo` with passwordless probe + one-time prompt.
+      Full audit trail. No paramiko; no permanent remote footprint.
 - [x] **Remote bundles** — `koda remote push|pull|list` for
       S3-compatible storage (AWS S3, R2, MinIO) with `.sha256` sidecar
       integrity verification.

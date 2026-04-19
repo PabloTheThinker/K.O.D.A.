@@ -7,7 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (Scheduled Monitoring)
+- **Continuous monitoring** (`koda schedule add|list|remove|run|history|diff`) — registers
+  periodic security scans via the OS scheduler (systemd user timer on Ubuntu, crontab fallback
+  on macOS / headless). No long-running daemon; the OS fires `koda schedule _tick <id>` at the
+  configured cron expression.
+- **Diff-based alerts** — each tick computes fingerprint-based new / resolved / persistent
+  categories and fires alerts only when new findings appear (configurable via
+  `--alert-on findings|change|empty`). CRITICAL and HIGH surface first in every alert.
+- **Alert channels**: `file:<path>` (default, always works), `telegram` (lazy — skips
+  gracefully when bridge not configured), `email:<addr>` (requires `KODA_HOME/smtp.toml`),
+  `webhook:<url>` (POST JSON, 5s timeout, one retry, audit on both attempts). Credentials
+  are redacted from all alert payloads.
+- **Run artifacts** — each run writes `KODA_HOME/schedules/<id>/runs/<run_id>/findings.jsonl`
+  and `meta.toml` (timings, exit code, severity breakdown). `latest` symlink tracks the most
+  recent run for fast diff computation.
+- **Schema-versioned schedule records** — `KODA_HOME/schedules/<id>.toml` carries
+  `schema_version = 1`; newer readers refuse to load schedules they can't understand.
+- **`koda schedule diff`** — explicit before/after diff with `--from` / `--to` run IDs.
+- **`koda schedule history`** — list past runs with finding counts.
+- **Orphan marker detection** — `koda schedule list` warns when crontab or systemd entries
+  exist without a matching `.toml` file.
+- **Tests**: `tests/test_schedule.py` — 65 tests covering models, diff engine, all alert
+  channels, crontab install/remove/list, systemd install/remove, tick happy path, scanner
+  failure recovery, alert-on policy, and CLI integration.
+- **Docs**: `docs/continuous-monitoring.md` — quick start, alert channels table, diff
+  semantics, run history, OS integration details.
+
 ### Added
+- **Remote SSH scanning** (`koda scan remote <ssh-target>`) — run any scanner
+  against a remote box over standard OpenSSH without installing anything
+  permanently. Uses ControlMaster multiplexing (one handshake, N commands).
+  Static Go binaries (trivy, gitleaks, nuclei, osv-scanner, grype) are
+  uploaded to a `/tmp/koda-<uuid>/bin/` scratchpad and deleted on exit.
+  Non-shippable scanners (semgrep, bandit, nmap, falco, checkov, kics) are
+  used as-is if pre-installed, or skipped with a clear warning.
+  `--sudo` probes passwordless sudo first; falls back to a single interactive
+  prompt whose password is piped via stdin and never written to disk or logged.
+  Five audit events: `scan.remote.connect`, `scan.remote.upload`,
+  `scan.remote.run`, `scan.remote.pull`, `scan.remote.cleanup`.
+  `--preset <name>` lazily imports `koda.missions.get(name)` — works today
+  with `--scanner` alone while the missions agent ships.
+  New package `koda/remote/` (`ssh.py`, `probe.py`, `provision.py`,
+  `executor.py`) + `koda/cli/scan.py`. +40 unit tests (no real SSH hit).
+  Docs: `docs/remote-scanning.md`.
 - **Hardened MCP server** — `koda mcp` over SSE now requires an
   `Authorization: Bearer` token on every request (auto-generated on
   first run, persisted to `mcp.toml` with 0600 perms). Optional mTLS via
@@ -35,6 +78,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Compatibility documentation** (`docs/compatibility.md`) — public API
   surface, deprecation policy, supported Python versions, artifact
   compatibility guarantees.
+
+### Added (v0.6 Wave 2 — Mission Presets)
+- **Mission presets** (`koda audit --preset <name>`) — five outcome-oriented
+  preset compositions that translate a security goal into a scanner set,
+  approval tier, and report style. Presets: `server-hardening`, `web-app`,
+  `pci-readiness`, `post-breach`, `sbom-scan`. New module `koda.missions`
+  exports a frozen `MissionPreset` dataclass with `PRESET_SCHEMA_VERSION = 1`.
+- **`koda audit` subcommand** with `--list-presets`, `--explain <preset>`,
+  `--preset <name> [target]`, `--dry-run`, `--engagement`, `--no-report`,
+  `--skip-scanner`, and `--url` flags. Exits 0 on pass (no HIGH/CRITICAL),
+  1 on fail, 2 on usage error.
+- Approval-tier enforcement: presets declare `safe`/`sensitive`/`dangerous`;
+  the CLI refuses to run if the active config's threshold is below the preset's
+  required tier.
+- Dependency-Track special dispatch in `sbom-scan`: reads
+  `KODA_DTRACK_URL`/`KODA_DTRACK_API_KEY`/`KODA_DTRACK_PROJECT_UUID` from
+  the environment; skips gracefully when absent.
+- `docs/audit-presets.md` — preset reference page; added to mkdocs nav after
+  "Skill packs".
+- Tests: +59 in `tests/test_missions.py` and `tests/test_cli_audit.py`.
+
+### Changed
+- **Scanner registry exposes `replay_run_cmd` context manager** — a
+  `ContextVar`-backed injection point that makes any scanner runner
+  parse a supplied `(stdout, stderr, exit_code)` tuple instead of
+  spawning a subprocess. Replaces a `unittest.mock.patch` call that
+  previously lived in production code at `koda/remote/executor.py` —
+  test infrastructure no longer imported at runtime.
 
 ### Added (v0.6 Wave 1)
 - **Engagement templates** (`koda new --template pentest|ir|audit`) with

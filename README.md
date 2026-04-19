@@ -92,6 +92,35 @@ koda version                # print version and exit
 koda uninstall              # interactive removal checklist (--dry-run supported)
 ```
 
+### Three ways to run it
+
+**Pick an outcome.** Translate a security goal into a scanner composition:
+
+```bash
+koda audit --preset server-hardening localhost
+koda audit --preset web-app https://staging.example.com
+koda audit --list-presets          # web-app, pci-readiness, post-breach, sbom-scan…
+```
+
+See [`docs/audit-presets.md`](docs/audit-presets.md).
+
+**Scan a client server over SSH.** ControlMaster-multiplexed OpenSSH, static binaries auto-uploaded, full audit trail, no permanent remote footprint:
+
+```bash
+koda scan remote user@server.example.com /srv/app --scanner trivy --scanner gitleaks
+```
+
+See [`docs/remote-scanning.md`](docs/remote-scanning.md).
+
+**Keep watch on a fleet.** Schedule recurring scans via system cron or systemd-user timers; fingerprint-based diff alerts only on new findings:
+
+```bash
+koda schedule add nightly-prod --cron "0 3 * * *" --preset server-hardening \
+    --target prod.example.com --alert telegram
+```
+
+See [`docs/continuous-monitoring.md`](docs/continuous-monitoring.md).
+
 ## Skills
 
 Skill packs are the extensibility seam. A skill is a directory with a single `SKILL.md` file:
