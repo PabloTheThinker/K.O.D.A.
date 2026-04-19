@@ -24,11 +24,44 @@ from ..adapters.base import Message, Provider, Role, ToolCall
 from ..audit import AuditLogger, NullAuditLogger, hash_arguments
 from ..auth import CredentialBroker, NullCredentialBroker
 from ..evidence import EvidenceStore, NullEvidenceStore
+from ..nlu import IntentRouter, RouterDecision
 from ..security.prompts import build_security_prompt
 from ..security.verifier import format_rejection, verify_draft
 from ..session.store import SessionStore
 from ..tools.approval import ApprovalPolicy, ApprovalRequest
 from ..tools.registry import RiskLevel, ToolRegistry, ToolResult
+
+
+def _append_nlu_block(current: str, decision: RouterDecision) -> str:
+    """Inject the router's classification into the system prompt so the model
+    sees the pre-LLM intent/risk/skill signals. Kept short — the model still
+    makes the real call; this is a hint layer, not a gate."""
+    t = decision.targets
+    target_parts: list[str] = []
+    if t.domains:
+        target_parts.append(f"domains={','.join(t.domains)}")
+    if t.ipv4s:
+        target_parts.append(f"ipv4s={','.join(t.ipv4s)}")
+    if t.usernames:
+        target_parts.append(f"usernames={','.join(t.usernames)}")
+    if t.cves:
+        target_parts.append(f"cves={','.join(t.cves)}")
+    if t.paths:
+        target_parts.append(f"paths={','.join(t.paths)}")
+    targets_str = "; ".join(target_parts) if target_parts else "none"
+    skills_str = ", ".join(decision.matched_skills[:5]) if decision.matched_skills else "none"
+    clarify_line = f"\nSuggested clarify: {decision.clarify}" if decision.clarify else ""
+    block = (
+        "<nlu>\n"
+        f"Intent: {decision.intent.value} (conf={decision.confidence:.2f})\n"
+        f"Risk tier: {decision.risk.value}\n"
+        f"Targets: {targets_str}\n"
+        f"Matched skills: {skills_str}"
+        f"{clarify_line}\n"
+        "Use this only as a hint. You are still responsible for ROE, scope, and grounding.\n"
+        "</nlu>"
+    )
+    return (current + "\n" + block) if current else block
 
 
 def _usage_meta(usage: dict[str, Any], latency_ms: int) -> dict[str, Any]:
@@ -78,6 +111,7 @@ class TurnLoop:
         audit: AuditLogger | NullAuditLogger | None = None,
         evidence: EvidenceStore | NullEvidenceStore | None = None,
         credentials: CredentialBroker | NullCredentialBroker | None = None,
+        router: IntentRouter | None = None,
     ) -> None:
         self.provider = provider
         self.registry = registry
@@ -88,6 +122,7 @@ class TurnLoop:
         self.audit = audit or NullAuditLogger()
         self.evidence = evidence or NullEvidenceStore()
         self.credentials = credentials or NullCredentialBroker()
+        self.router = router
 
     def _build_messages(self, extra_system_prompt: str) -> list[Message]:
         system = Message(role=Role.SYSTEM, content=build_security_prompt(extra_system_prompt))
@@ -202,6 +237,25 @@ class TurnLoop:
             engagement=self.engagement,
             user_len=len(user_input),
         )
+
+        if self.router is not None:
+            decision = self.router.route(user_input)
+            self.audit.emit(
+                "turn.route",
+                session_id=self.session_id,
+                engagement=self.engagement,
+                intent=decision.intent.value,
+                confidence=round(decision.confidence, 3),
+                risk=decision.risk.value,
+                matched_skills=list(decision.matched_skills[:5]),
+                clarify=decision.clarify or "",
+            )
+            options = TurnOptions(
+                max_tool_iterations=options.max_tool_iterations,
+                max_verifier_retries=options.max_verifier_retries,
+                tool_choice=options.tool_choice,
+                extra_system_prompt=_append_nlu_block(options.extra_system_prompt, decision),
+            )
 
         tools_specs = self.registry.specs()
         verifier_retries = 0

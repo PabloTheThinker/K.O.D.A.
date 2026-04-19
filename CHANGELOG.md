@@ -7,7 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-04-19
+
+Framework turn: external skill packs, rule-based NLU, operator persona.
+
 ### Added
+- **External skill pack loader** (`koda/skills/`) — drop `SKILL.md` directories
+  into `./skills`, `~/.koda/skills`, or `$KODA_SKILLS_PATH` to register security
+  playbooks with `koda.security.skills.registry.DEFAULT_REGISTRY`. YAML
+  frontmatter drives mode/phase/attack_techniques; markdown body becomes the
+  operator-voice prompt fragment. Errors surface as `(path, message)` pairs —
+  never raise.
+- **Built-in skill packs** ported from Hermes' `optional-skills/security/`:
+  `sherlock` (OSINT username search, red/recon, T1589/T1593),
+  `oss-forensics` (GitHub supply-chain IR, blue/ir, T1195.002/T1588.001),
+  `1password` (CLI secrets, blue/hardening, T1552.001).
+- **Rule-based NLU router** (`koda/nlu/`) — pure-Python intent classifier
+  (recon / exploit / ir / audit / lookup / admin / chat / ambiguous), target
+  extraction (domains, IPv4, usernames, CVEs, paths), risk-tier inference,
+  and registry-backed skill ranking. No LLM calls in the hot path.
+- **Agent loop integration** — `TurnLoop(router=...)` classifies every user
+  turn before the LLM call, emits a `turn.route` audit event, and injects
+  an `<nlu>` hint block into the system prompt with intent, risk, targets,
+  matched skills, and an optional clarify question.
+- **Persona block** in the security prompt — Koda now has a distinct operator
+  voice (calm, precise, ROE-first, evidence-over-opinion, jargon-matching).
+- Test suite at `tests/test_skills_loader.py` and `tests/test_nlu_router.py`
+  (13 tests covering frontmatter parsing, loader error paths, intent
+  classification, risk inference, and clarify routing).
+
+### Added (previous Unreleased)
 - `koda --version` / `koda version` — print version and exit.
 
 ### Changed
