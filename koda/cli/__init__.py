@@ -436,8 +436,16 @@ def main(argv: list[str] | None = None) -> int:
     import asyncio
     argv = argv if argv is not None else sys.argv[1:]
 
+    if argv and argv[0] in {"-V", "--version", "version"}:
+        from .. import __version__
+        print(f"koda {__version__}")
+        return 0
+
     if argv and argv[0] in {"-h", "--help"}:
+        from .. import __version__
         print(_BANNER)
+        print(f"K.O.D.A. {__version__}")
+        print()
         print("usage: koda                   start REPL (runs setup on first run)")
         print("       koda setup             (re)run the setup wizard")
         print("       koda doctor            show config + provider status")
@@ -446,6 +454,7 @@ def main(argv: list[str] | None = None) -> int:
         print("       koda update            pull + install the latest release")
         print("       koda uninstall         remove K.O.D.A. (interactive checklist)")
         print("       koda profile <cmd>     list | create | use | delete | show")
+        print("       koda version           print version and exit")
         print("       koda -p <name> ...     use a named profile for this command")
         print()
         print("env: KODA_PROVIDER, KODA_MODEL, ANTHROPIC_API_KEY, KODA_HOME, KODA_DEFAULT_HOME")

@@ -1,0 +1,90 @@
+# Changelog
+
+All notable changes to K.O.D.A. are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+- `koda --version` / `koda version` — print version and exit.
+
+### Changed
+- README restructured: "Why K.O.D.A.", elevated Security Model, Architecture
+  section with flow diagram, Status & Roadmap, Migrating From sections.
+
+### Fixed
+- `koda/__init__.py` version now matches `pyproject.toml` (was 0.1.0, now 0.2.0).
+
+## [0.2.0] — 2026-04-18
+
+First public-ready beta. Full security agent surface end-to-end.
+
+### Added
+- **Pre-save credential verification** in the setup wizard — every provider is
+  pinged with a real chat roundtrip before config is written. Retry / skip /
+  abort loop on failure.
+- **Telegram bridge** (`koda telegram`) — full bi-directional operator surface
+  with inline-keyboard approvals, inbound media, fragment buffering, and slash
+  commands (`/help`, `/status`, `/new`, `/model`, `/history`) at parity with
+  the REPL.
+- **MCP server** (`koda mcp`) — exposes scanner + evidence tools to any
+  MCP-compatible client over stdio and SSE.
+- **Append-only audit log** (JSONL) with `fsync` on security-relevant events
+  and size-based rotation.
+- **Tamper-evident evidence store** — SHA-256 content addressing + merkle chain
+  per engagement, portable `tar.gz` bundles that reverify with Python stdlib
+  only.
+- **Credential broker** — per-engagement vault with placeholder detection,
+  cooldown on failure, and automatic redaction across transcripts, evidence,
+  and audit rows.
+- **Local threat intel cache** — offline SQLite of CISA KEV, EPSS, CWE, and
+  NVD CVE. Zero network at query time.
+- **Findings correlation** — content-fingerprint dedup, KEV/EPSS/CVSS
+  enrichment, severity upgrade on KEV hit.
+- **Scanner wrappers (8)** — Semgrep, Trivy, Bandit, Gitleaks, Nuclei,
+  OSV-Scanner, Nmap, Grype. Generic SARIF 2.1.0 reader for anything else.
+- **11 provider adapters** — Ollama, Claude CLI, Anthropic, OpenAI, Google
+  Gemini, Groq, Together AI, OpenRouter, DeepSeek, xAI (Grok), Mistral.
+- **Multi-stage setup wizard** — risk acknowledgement, engagement naming,
+  approval thresholds, scanner probe, Telegram setup.
+- **Engagement-scoped isolation** — sessions, credentials, evidence, and audit
+  rows are all tagged with the active engagement; swapping engagements swaps
+  the entire context.
+- **Profile isolation** — `koda -p <name>` runs under a named `KODA_HOME`;
+  sticky default via `~/.koda/active_profile`.
+- **Approval gate** — per-tool risk tiers (SAFE / SENSITIVE / DANGEROUS /
+  BLOCKED) with argument-level guardrails. Defaults auto-approve up to
+  DANGEROUS; BLOCKED never runs.
+- **Helix DSEM memory** — dual-store entangled memory with cross-store
+  verification and conflict tracking.
+- **Installer** — hosted one-liner with update and uninstall flows.
+- **CI** — GitHub Actions running ruff, Python 3.11/3.12/3.13 install+import
+  matrix, and `install.sh` smoke on every push.
+- **Distribution hardening** — SECURITY.md, .github/ISSUE_TEMPLATE/ structured
+  forms, .github/workflows/ci.yml.
+
+### Changed
+- Install-directory detection now uses `sys.prefix` instead of
+  `sys.executable.resolve()` — `uv`-managed venvs symlink `.venv/bin/python`
+  to the system Python, which was causing auto-detect to point into `/usr`.
+
+### Security
+- Credential redaction is enforced across transcripts, evidence, and audit —
+  secrets never leak into captured artifacts.
+- Default approval threshold blocks anything marked DANGEROUS without explicit
+  consent at wizard time.
+
+## [0.1.0] — 2026-03-01
+
+Initial scaffold. Private development; no public release.
+
+### Added
+- Harness skeleton, tool registry, approval gate.
+- Three initial provider adapters (Ollama, Claude CLI, Anthropic).
+- Session store, turn loop, CLI entry, first-run setup wizard.
+
+[Unreleased]: https://github.com/PabloTheThinker/K.O.D.A./compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/PabloTheThinker/K.O.D.A./releases/tag/v0.2.0
+[0.1.0]: https://github.com/PabloTheThinker/K.O.D.A./releases/tag/v0.1.0
