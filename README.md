@@ -176,11 +176,21 @@ the REPL, or leave it at `default` for personal use.
 ## Remote Operations
 
 K.O.D.A. ships a **Telegram bridge** for running engagements from a phone.
-Configure via `koda setup` (Stage 8), then `koda telegram` runs a daemon that
-relays messages, approvals, and alerts to your chat. Inline-keyboard
-approvals, inbound media, fragment buffering, and slash commands (`/help`,
-`/status`, `/new`, `/model`, `/history`) work from both the REPL and Telegram
-with parity.
+Configure via `koda setup` (Stage 8), or manually by writing
+`~/.koda/secrets.env`:
+
+```
+KODA_TELEGRAM_BOT_TOKEN=<BotFather token>
+KODA_TELEGRAM_CHAT_ID=<your Telegram user id>
+```
+
+Then `koda telegram` runs a daemon that relays messages, approvals, and
+alerts to your chat. Only the configured `CHAT_ID` is served — all other
+chats are audit-logged and dropped. Inline-keyboard approvals, inbound
+photos/documents (25 MB cap), fragment buffering, and slash commands
+(`/help`, `/new`, `/reset`, `/status`, `/model`, `/models`, `/history`,
+`/stop`) work from both the REPL and Telegram with parity. Stdlib-only —
+no third-party dependencies.
 
 An **MCP server** is also available: `koda mcp` exposes the scanner and
 evidence tools to any MCP-compatible client (stdio + SSE transports).
