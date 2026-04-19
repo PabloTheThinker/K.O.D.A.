@@ -302,10 +302,6 @@ def technical_report(bundle: ReportBundle) -> str:
         out.append(_h2("Appendix A — Per-CVE Enrichment"))
         for cve_id in all_cves:
             out.append(f"{cve_id}")
-            try:
-                enr = bundle.stats.get("_intel")
-            except Exception:
-                enr = None
             # Intel lookups happen at write time so stats stays serializable.
             out.extend(_cve_enrichment_lines(cve_id, bundle))
             out.append("")
