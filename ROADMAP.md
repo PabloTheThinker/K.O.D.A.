@@ -108,14 +108,7 @@ not promises — plans change when reality pushes back.
       (auto-generated + persisted), optional mTLS via client-CA flag,
       every auth attempt audit-logged. Stdio unchanged. `--no-auth`
       refuses any non-loopback bind.
-- [ ] **Team mode.** Multi-operator engagements with per-operator audit
-      trails and handoff. _Design input needed — scope TBD._
-
-### v1.0 — Production-Ready
-
-API stable. SemVer commitments kick in — no breaking changes in 1.x
-without a deprecation cycle.
-
+### Shipped as part of the v0.6 / v0.7 cycle
 - [x] **SBOM per release** — CycloneDX `.json` + `.xml` attached to every
       GitHub Release.
 - [x] **Reproducible builds** — `SOURCE_DATE_EPOCH` pinned to tag commit
@@ -123,14 +116,20 @@ without a deprecation cycle.
 - [x] **Formal compatibility statement** — [docs/compatibility.md](https://pablothethinker.github.io/K.O.D.A./compatibility/)
       documents public API surface, deprecation policy, Python support
       matrix, artifact compatibility.
-- [ ] **Third-party security audit.** External review of the trust
-      boundaries: grounding verifier, approval gate, credential broker,
-      evidence chain, Guardian pre-filter. _Human engagement — scheduling
-      post-1.0-rc._
-- [ ] **Signed wheels.** Sigstore/cosign signing on release artifacts.
-      **help wanted**
 
-## Post-1.0 (Exploratory)
+## Later (Shelved)
+
+Tracked but not currently scheduled — revisit when there is a user base
+large enough to justify the lift:
+
+- **v1.0 / SemVer freeze** with third-party security audit of the trust
+  boundaries (grounding verifier, approval gate, credential broker,
+  evidence chain, Guardian pre-filter) and Sigstore/cosign-signed
+  release artifacts.
+- **Team mode.** Multi-operator engagements with per-operator audit
+  trails and handoff.
+
+## Exploratory
 
 - Distributed grounding: cross-check claims against multiple LLMs before
   emitting them.
