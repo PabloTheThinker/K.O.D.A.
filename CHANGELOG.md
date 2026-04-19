@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-04-19
+
+Security-framework turn: outcome-oriented audit presets, remote SSH
+scanning, scheduled continuous monitoring, hardened MCP, remote evidence
+bundle sync, reproducible builds + SBOMs, and four new scanners + four
+new provider adapters. 591 tests, ruff clean.
+
 ### Added (Scheduled Monitoring)
 - **Continuous monitoring** (`koda schedule add|list|remove|run|history|diff`) — registers
   periodic security scans via the OS scheduler (systemd user timer on Ubuntu, crontab fallback
@@ -310,7 +317,8 @@ Initial scaffold. Private development; no public release.
 - Three initial provider adapters (Ollama, Claude CLI, Anthropic).
 - Session store, turn loop, CLI entry, first-run setup wizard.
 
-[Unreleased]: https://github.com/PabloTheThinker/K.O.D.A./compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/PabloTheThinker/K.O.D.A./compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/PabloTheThinker/K.O.D.A./releases/tag/v0.6.0
 [0.5.0]: https://github.com/PabloTheThinker/K.O.D.A./releases/tag/v0.5.0
 [0.4.0]: https://github.com/PabloTheThinker/K.O.D.A./releases/tag/v0.4.0
 [0.3.0]: https://github.com/PabloTheThinker/K.O.D.A./releases/tag/v0.3.0
