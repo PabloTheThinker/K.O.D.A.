@@ -25,11 +25,14 @@ from ..audit import AuditLogger, NullAuditLogger, hash_arguments
 from ..auth import CredentialBroker, NullCredentialBroker
 from ..evidence import EvidenceStore, NullEvidenceStore
 from ..nlu import IntentRouter, RouterDecision
+from ..security.guardian import Guardian
 from ..security.prompts import build_security_prompt
 from ..security.verifier import format_rejection, verify_draft
+from ..session.compressor import ContextCompressor
 from ..session.store import SessionStore
 from ..tools.approval import ApprovalPolicy, ApprovalRequest
 from ..tools.registry import RiskLevel, ToolRegistry, ToolResult
+from .reflection import ReflectionEngine
 
 
 def _append_nlu_block(current: str, decision: RouterDecision) -> str:
@@ -112,6 +115,9 @@ class TurnLoop:
         evidence: EvidenceStore | NullEvidenceStore | None = None,
         credentials: CredentialBroker | NullCredentialBroker | None = None,
         router: IntentRouter | None = None,
+        guardian: Guardian | None = None,
+        reflection: ReflectionEngine | None = None,
+        compressor: ContextCompressor | None = None,
     ) -> None:
         self.provider = provider
         self.registry = registry
@@ -123,12 +129,53 @@ class TurnLoop:
         self.evidence = evidence or NullEvidenceStore()
         self.credentials = credentials or NullCredentialBroker()
         self.router = router
+        self.guardian = guardian
+        self.reflection = reflection
+        self.compressor = compressor
 
     def _build_messages(self, extra_system_prompt: str) -> list[Message]:
         system = Message(role=Role.SYSTEM, content=build_security_prompt(extra_system_prompt))
-        return [system] + self.session.messages(self.session_id)
+        history = self.session.messages(self.session_id)
+        if self.compressor is not None:
+            flat = [{"role": m.role.value, "content": m.content} for m in history]
+            if self.compressor.should_compress(flat):
+                self.audit.emit(
+                    "session.compressed",
+                    session_id=self.session_id,
+                    engagement=self.engagement,
+                    messages=len(history),
+                )
+        return [system] + history
 
     async def _run_tool_call(self, tc: ToolCall, trace: TurnTrace) -> Message:
+        if self.guardian is not None:
+            g = self.guardian.review_tool_call(tc.name, tc.arguments)
+            if g.blocked:
+                self.audit.emit(
+                    "guardian.block",
+                    session_id=self.session_id,
+                    engagement=self.engagement,
+                    tool=tc.name,
+                    category=g.category,
+                    reason=g.reason,
+                )
+                err_content = f"Guardian blocked '{tc.name}': {g.reason}"
+                tool_msg = Message(
+                    role=Role.TOOL,
+                    content=err_content,
+                    tool_call_id=tc.id,
+                    metadata={
+                        "tool_name": tc.name,
+                        "is_error": True,
+                        "approved": False,
+                        "guardian_block": g.category,
+                    },
+                )
+                self.session.append(self.session_id, tool_msg)
+                trace.tool_calls_made += 1
+                trace.tool_transcript.append(f"[tool_result {tc.name}]\n{err_content}")
+                return tool_msg
+
         tool = self.registry.get(tc.name)
         risk = tool.risk if tool else RiskLevel.SENSITIVE
         request = ApprovalRequest(
@@ -238,6 +285,27 @@ class TurnLoop:
             user_len=len(user_input),
         )
 
+        if self.guardian is not None:
+            g = self.guardian.review_input(user_input)
+            if g.blocked:
+                self.audit.emit(
+                    "guardian.block",
+                    session_id=self.session_id,
+                    engagement=self.engagement,
+                    category=g.category,
+                    reason=g.reason,
+                )
+                refusal = f"Blocked by guardian: {g.reason}"
+                self.session.append(
+                    self.session_id, Message(role=Role.ASSISTANT, content=refusal)
+                )
+                trace.final_text = refusal
+                trace.aborted = True
+                trace.abort_reason = f"guardian:{g.category}"
+                self._emit_turn_end(trace, 0, 0)
+                self._record_turn(trace, len(user_input), success=False)
+                return trace
+
         if self.router is not None:
             decision = self.router.route(user_input)
             self.audit.emit(
@@ -282,6 +350,7 @@ class TurnLoop:
                     detail=trace.abort_reason,
                 )
                 self._emit_turn_end(trace, tokens_prompt, tokens_completion)
+                self._record_turn(trace, len(user_input), success=False)
                 return trace
 
             if resp.tool_calls:
@@ -298,6 +367,7 @@ class TurnLoop:
                     trace.aborted = True
                     trace.abort_reason = "tool-iteration budget exhausted"
                     self._emit_turn_end(trace, tokens_prompt, tokens_completion)
+                    self._record_turn(trace, len(user_input), success=False)
                     return trace
                 continue
 
@@ -311,6 +381,7 @@ class TurnLoop:
                 )
                 trace.final_text = draft
                 self._emit_turn_end(trace, tokens_prompt, tokens_completion)
+                self._record_turn(trace, len(user_input), success=True)
                 return trace
 
             verifier_retries += 1
@@ -325,7 +396,27 @@ class TurnLoop:
         trace.aborted = True
         trace.abort_reason = "outer loop budget exhausted"
         self._emit_turn_end(trace, tokens_prompt, tokens_completion)
+        self._record_turn(trace, len(user_input), success=False)
         return trace
+
+    def _record_turn(self, trace: TurnTrace, user_len: int, success: bool) -> None:
+        if self.reflection is None:
+            return
+        tool_names: list[str] = []
+        for line in trace.tool_transcript:
+            if line.startswith("[tool_result "):
+                name = line.split(" ", 1)[1].split("]", 1)[0].strip()
+                if name:
+                    tool_names.append(name)
+        self.reflection.record(
+            success=success,
+            tools=tool_names,
+            error=trace.abort_reason or None,
+            input_len=user_len,
+            output_len=len(trace.final_text),
+            iteration=trace.iterations,
+            engagement=self.engagement,
+        )
 
     def _emit_turn_end(self, trace: TurnTrace, tokens_prompt: int, tokens_completion: int) -> None:
         event = "turn.aborted" if trace.aborted else "turn.complete"
