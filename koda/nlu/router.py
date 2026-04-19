@@ -83,6 +83,15 @@ IR_KW = frozenset(
         "containment",
         "triage",
         "investigate",
+        "listener",
+        "listening",
+        "listeners",
+        "hunt",
+        "auth failure",
+        "failed login",
+        "brute force",
+        "log analysis",
+        "suspicious",
     }
 )
 AUDIT_KW = frozenset({"audit", "compliance", "cis", "benchmark", "harden", "configuration review", "posture"})
