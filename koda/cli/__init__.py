@@ -451,6 +451,7 @@ def main(argv: list[str] | None = None) -> int:
         print("       koda doctor            show config + provider status")
         print("       koda mcp               start MCP server (expose tools)")
         print("       koda telegram          start the Telegram bridge daemon")
+        print("       koda intel <cmd>       sync | status | lookup | search threat intel")
         print("       koda update            pull + install the latest release")
         print("       koda uninstall         remove K.O.D.A. (interactive checklist)")
         print("       koda profile <cmd>     list | create | use | delete | show")
@@ -480,6 +481,10 @@ def main(argv: list[str] | None = None) -> int:
         _load_secrets_env()
         from ..notify.telegram_daemon import main as telegram_main
         return telegram_main(argv[1:])
+
+    if argv and argv[0] == "intel":
+        from .intel import main as intel_main
+        return intel_main(argv[1:])
 
     if argv and argv[0] == "update":
         return _cmd_update(argv[1:])
