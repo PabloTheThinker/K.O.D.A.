@@ -496,6 +496,7 @@ def main(argv: list[str] | None = None) -> int:
         print("       koda new --template <t> <n> scaffold an engagement from a template")
         print("       koda new --list-templates   list available templates")
         print("       koda use <name>             activate an engagement")
+        print("       koda remote push|pull|list  sync evidence bundles to/from S3/R2/MinIO")
         print("       koda update                 pull + install the latest release")
         print("       koda uninstall              remove K.O.D.A. (interactive checklist)")
         print("       koda profile <cmd>          list | create | use | delete | show")
@@ -549,6 +550,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if argv and argv[0] in {"profile", "profiles"}:
         return _cmd_profile(argv[1:])
+
+    if argv and argv[0] == "remote":
+        from .remote import main as remote_main
+        return remote_main(argv[1:])
 
     return asyncio.run(_repl())
 

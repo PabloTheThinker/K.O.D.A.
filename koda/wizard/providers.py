@@ -686,6 +686,182 @@ def setup_azure_openai(
 
 
 # ---------------------------------------------------------------------------
+# Vertex AI setup
+# ---------------------------------------------------------------------------
+
+_VERTEX_AI_MODELS = [
+    SelectOption(
+        value="gemini-1.5-pro-002",
+        label="gemini-1.5-pro-002",
+        hint="stable GA — broadest regional availability",
+    ),
+    SelectOption(
+        value="gemini-1.5-flash-002",
+        label="gemini-1.5-flash-002",
+        hint="fast, cost-efficient GA model",
+    ),
+    SelectOption(
+        value="gemini-2.0-flash-001",
+        label="gemini-2.0-flash-001",
+        hint="next-gen fast model (check project allow-listing)",
+    ),
+    SelectOption(
+        value="gemini-2.5-pro-preview-03-25",
+        label="gemini-2.5-pro-preview-03-25",
+        hint="most capable preview — may require allowlist",
+    ),
+]
+
+_DEFAULT_VERTEX_LOCATION = "us-central1"
+
+
+def _try_adc_token_for_wizard() -> tuple[bool, str]:
+    """Attempt ADC credentials refresh.
+
+    Returns (success, detail_message).
+    """
+    try:
+        import google.auth  # type: ignore[import-not-found]
+        import google.auth.transport.requests  # type: ignore[import-not-found]
+    except ImportError:
+        return False, "google-auth not installed (pip install google-auth)"
+    try:
+        credentials, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        request = google.auth.transport.requests.Request()
+        credentials.refresh(request)
+        return True, "ADC credentials refreshed successfully"
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc)
+
+
+def setup_vertex_ai(
+    prompter: Prompter,
+    *,
+    existing_token: str | None = None,
+) -> ProviderSetupResult:
+    """Wizard flow for Google Vertex AI (enterprise Gemini).
+
+    Supports two auth modes:
+      - ADC (Application Default Credentials) via google-auth
+      - Explicit bearer token (e.g. ``gcloud auth print-access-token``)
+    """
+    prompter.section("Google Vertex AI")
+    prompter.note(
+        "Vertex AI is Google's enterprise Gemini endpoint.\n"
+        "It requires a GCP project and either:\n"
+        "  • Application Default Credentials (gcloud auth application-default login)\n"
+        "  • An explicit bearer token from gcloud or a service account.\n"
+        "The token is stored at ~/.koda/secrets.env (0600) — never in config.yaml.",
+        title="Vertex AI",
+    )
+
+    def _validate_project(value: str) -> str | None:
+        if not value or not value.strip():
+            return "GCP project ID is required."
+        if " " in value:
+            return "project ID must not contain spaces."
+        return None
+
+    project = prompter.text(
+        "GCP project ID",
+        placeholder="my-gcp-project-123",
+        validate=_validate_project,
+    )
+
+    location = prompter.text(
+        "Location / region",
+        default=_DEFAULT_VERTEX_LOCATION,
+        placeholder=_DEFAULT_VERTEX_LOCATION,
+    )
+    if not location.strip():
+        location = _DEFAULT_VERTEX_LOCATION
+
+    model_options = list(_VERTEX_AI_MODELS) + [
+        SelectOption(value="__custom__", label="custom model id…", hint="type your own")
+    ]
+    picked_model = prompter.select("Default model", model_options, initial=0)
+    if picked_model == "__custom__":
+        picked_model = prompter.text(
+            "Model id",
+            placeholder="gemini-1.5-pro-002",
+        )
+
+    auth_choice = prompter.select(
+        "Auth mode",
+        [
+            SelectOption(
+                value="adc",
+                label="ADC (google-auth)",
+                hint="Application Default Credentials — recommended",
+            ),
+            SelectOption(
+                value="token",
+                label="Explicit bearer token",
+                hint="paste output of: gcloud auth print-access-token",
+            ),
+        ],
+        initial=0,
+    )
+
+    secrets: dict[str, str] = {}
+    config: dict[str, Any] = {
+        "project": project,
+        "location": location,
+    }
+
+    if auth_choice == "adc":
+        # Try ADC at wizard time so the operator gets immediate feedback.
+        with prompter.progress("testing Application Default Credentials") as p:
+            adc_ok, adc_detail = _try_adc_token_for_wizard()
+            p.stop(adc_detail if adc_ok else f"failed: {adc_detail}")
+
+        if not adc_ok:
+            prompter.note(
+                "ADC check failed. To fix, run:\n"
+                "  gcloud auth application-default login\n"
+                "then re-run this wizard. You can continue and fix auth later.",
+                title="ADC not configured",
+            )
+            retry = prompter.confirm("Retry ADC check after fixing credentials?", default=False)
+            if retry:
+                with prompter.progress("retrying ADC") as p:
+                    adc_ok, adc_detail = _try_adc_token_for_wizard()
+                    p.stop(adc_detail if adc_ok else f"still failing: {adc_detail}")
+        # Config carries no access_token — the adapter will call ADC at runtime.
+
+    else:
+        # Explicit token path.
+        token = existing_token or ""
+        if not token:
+            prompter.note(
+                "Run this in your terminal to get a token:\n"
+                "  gcloud auth print-access-token\n"
+                "Tokens expire after ~1 hour.",
+                title="Bearer token",
+            )
+            token = prompter.password(
+                "Access token",
+                validate=lambda v: "token appears too short." if len(v) < 10 else None,
+            )
+        if token:
+            secrets["VERTEX_AI_ACCESS_TOKEN"] = token
+            config["access_token"] = token
+
+    quota = _configure_quota(prompter, scope_label="Vertex AI")
+
+    return ProviderSetupResult(
+        provider_id="vertex_ai",
+        provider_label="Google Vertex AI",
+        model=picked_model,
+        config=config,
+        secrets=secrets,
+        quota=quota,
+    )
+
+
+# ---------------------------------------------------------------------------
 # llama.cpp server setup
 # ---------------------------------------------------------------------------
 
@@ -760,6 +936,125 @@ def setup_llamacpp(prompter: Prompter) -> ProviderSetupResult:
     )
 
 
+# ---------------------------------------------------------------------------
+# AWS Bedrock setup
+# ---------------------------------------------------------------------------
+
+_BEDROCK_DEFAULT_MODEL = "anthropic.claude-3-5-sonnet-20241022-v2:0"
+_BEDROCK_DEFAULT_REGION = "us-east-1"
+
+_BEDROCK_MODELS = [
+    SelectOption(
+        value="anthropic.claude-3-5-sonnet-20241022-v2:0",
+        label="claude-3-5-sonnet-20241022-v2",
+        hint="Claude 3.5 Sonnet — GA in us-east-1 / us-west-2 (default)",
+    ),
+    SelectOption(
+        value="anthropic.claude-3-5-haiku-20241022-v1:0",
+        label="claude-3-5-haiku-20241022-v1",
+        hint="Claude 3.5 Haiku — fast, cost-efficient",
+    ),
+    SelectOption(
+        value="anthropic.claude-3-opus-20240229-v1:0",
+        label="claude-3-opus-20240229-v1",
+        hint="Claude 3 Opus — most capable Claude 3 family",
+    ),
+    SelectOption(
+        value="anthropic.claude-3-sonnet-20240229-v1:0",
+        label="claude-3-sonnet-20240229-v1",
+        hint="Claude 3 Sonnet — balanced",
+    ),
+]
+
+
+def _detect_boto3() -> bool:
+    """Return True if boto3 is importable."""
+    try:
+        import importlib
+        importlib.import_module("boto3")
+        return True
+    except ImportError:
+        return False
+
+
+def setup_bedrock(prompter: Prompter) -> ProviderSetupResult:
+    """Wizard flow for AWS Bedrock Runtime (converse API).
+
+    Auth comes from the standard AWS credential chain — no API key is stored
+    by K.O.D.A.  Prompts for model ID, region, and optional profile name.
+    A small converse ping is attempted before saving.
+    """
+    prompter.section("AWS Bedrock")
+    prompter.note(
+        "AWS Bedrock uses the standard AWS credential chain:\n"
+        "  • AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY env vars\n"
+        "  • ~/.aws/credentials profiles\n"
+        "  • IAM instance roles / ECS task roles\n"
+        "No credentials are stored by K.O.D.A. — auth is handled by boto3.\n"
+        "Ensure the IAM principal has bedrock:InvokeModel permission and\n"
+        "that the target model is enabled in the selected region.",
+        title="AWS Bedrock",
+    )
+
+    # Check boto3 availability at wizard time.
+    has_boto3 = _detect_boto3()
+    if not has_boto3:
+        prompter.status(False, "boto3 not installed")
+        prompter.note(
+            "boto3 is required for the Bedrock adapter.\n"
+            "Install it with:  pip install boto3\n"
+            "Then re-run this wizard.",
+            title="Missing dependency",
+        )
+        if not prompter.confirm("Continue setup anyway (fix boto3 later)?", default=False):
+            from .prompter import WizardCancelled
+            raise WizardCancelled("boto3 not installed — bedrock setup aborted")
+    else:
+        prompter.status(True, "boto3 available")
+
+    model_options = list(_BEDROCK_MODELS) + [
+        SelectOption(value="__custom__", label="custom model id…", hint="type a full Bedrock model ID")
+    ]
+    picked_model = prompter.select("Default model", model_options, initial=0)
+    if picked_model == "__custom__":
+        picked_model = prompter.text(
+            "Model id",
+            placeholder=_BEDROCK_DEFAULT_MODEL,
+        )
+    if not picked_model.strip():
+        picked_model = _BEDROCK_DEFAULT_MODEL
+
+    region = prompter.text(
+        "AWS region",
+        default=_BEDROCK_DEFAULT_REGION,
+        placeholder=_BEDROCK_DEFAULT_REGION,
+    )
+    if not region.strip():
+        region = _BEDROCK_DEFAULT_REGION
+
+    profile = prompter.text(
+        "AWS profile name (blank = default chain)",
+        default="",
+        placeholder="e.g. default, prod-role — blank to skip",
+    )
+    profile = profile.strip() or ""
+
+    quota = _configure_quota(prompter, scope_label="AWS Bedrock")
+
+    cfg: dict[str, Any] = {"region": region}
+    if profile:
+        cfg["aws_profile"] = profile
+
+    return ProviderSetupResult(
+        provider_id="bedrock",
+        provider_label="AWS Bedrock",
+        model=picked_model,
+        config=cfg,
+        secrets={},  # AWS creds live in the credential chain, not our secrets file
+        quota=quota,
+    )
+
+
 __all__ = [
     "QuotaSpec",
     "ProviderSetupResult",
@@ -777,10 +1072,12 @@ __all__ = [
     "detect_ollama_models",
     "setup_anthropic",
     "setup_azure_openai",
+    "setup_bedrock",
     "setup_claude_cli",
     "setup_llamacpp",
     "setup_ollama",
     "setup_openai_compat",
     "setup_gemini",
+    "setup_vertex_ai",
     "WizardCancelled",
 ]

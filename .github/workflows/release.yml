@@ -18,11 +18,19 @@ jobs:
       - name: Install build tooling
         run: |
           python -m pip install --upgrade pip
-          pip install build twine
+          pip install build twine cyclonedx-bom
       - name: Build
-        run: python -m build
+        # SOURCE_DATE_EPOCH pins file mtimes so repeated builds at the same git
+        # commit produce byte-identical wheels + sdists — reproducible builds.
+        run: |
+          export SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)
+          python -m build
       - name: Validate metadata
         run: twine check dist/*
+      - name: Generate SBOM (CycloneDX)
+        run: |
+          cyclonedx-py environment --of json -o dist/sbom.cdx.json
+          cyclonedx-py environment --of xml  -o dist/sbom.cdx.xml
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -46,6 +54,9 @@ jobs:
         with:
           name: dist
           path: dist/
+      - name: Remove SBOM files before publish
+        # PyPI action rejects non-wheel/sdist files; SBOM stays in GH release only.
+        run: rm -f dist/sbom.cdx.json dist/sbom.cdx.xml
       - name: Publish
         uses: pypa/gh-action-pypi-publish@release/v1
 

@@ -22,19 +22,22 @@ from .providers import (
     detect_xai_env_key,
     setup_anthropic,
     setup_azure_openai,
+    setup_bedrock,
     setup_claude_cli,
     setup_gemini,
     setup_llamacpp,
     setup_ollama,
     setup_openai_compat,
+    setup_vertex_ai,
 )
 from .secrets import save_secrets
 
 __all__ = [
     "Prompter", "SelectOption", "WizardCancelled",
     "ProviderSetupResult", "QuotaSpec",
-    "setup_anthropic", "setup_azure_openai", "setup_claude_cli",
+    "setup_anthropic", "setup_azure_openai", "setup_bedrock", "setup_claude_cli",
     "setup_llamacpp", "setup_ollama", "setup_openai_compat", "setup_gemini",
+    "setup_vertex_ai",
     "detect_anthropic_env_key", "detect_azure_openai_env_key",
     "detect_claude_cli", "detect_ollama_models",
     "detect_openai_env_key", "detect_groq_env_key", "detect_together_env_key",

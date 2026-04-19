@@ -54,11 +54,13 @@ from ..wizard import (
     save_secrets,
     setup_anthropic,
     setup_azure_openai,
+    setup_bedrock,
     setup_claude_cli,
     setup_gemini,
     setup_llamacpp,
     setup_ollama,
     setup_openai_compat,
+    setup_vertex_ai,
 )
 
 SECRETS_PATH = KODA_HOME / "secrets.env"
@@ -168,6 +170,18 @@ _PROVIDER_OPTIONS: tuple[_ProviderOption, ...] = (
         detail_fn=lambda v: "key detected" if v else "no key",
     ),
     _ProviderOption(
+        value="vertex_ai", label="Google Vertex AI",
+        base_hint="enterprise Gemini — ADC or explicit token",
+        detector=None,
+        detail_fn=None,
+    ),
+    _ProviderOption(
+        value="bedrock", label="AWS Bedrock",
+        base_hint="AWS credential chain — no API key stored",
+        detector=None,
+        detail_fn=None,
+    ),
+    _ProviderOption(
         value="llamacpp", label="llama.cpp (local)",
         base_hint="local server — no API key needed",
         detector=None,
@@ -240,6 +254,10 @@ def _run_provider_setup(prompter: Prompter, provider_id: str) -> ProviderSetupRe
         return setup_ollama(prompter)
     if provider_id == "gemini":
         return setup_gemini(prompter, existing_key=detect_gemini_env_key())
+    if provider_id == "vertex_ai":
+        return setup_vertex_ai(prompter)
+    if provider_id == "bedrock":
+        return setup_bedrock(prompter)
     if provider_id in {"openai", "groq", "together", "openrouter", "deepseek", "xai", "mistral"}:
         return setup_openai_compat(prompter, provider_id)
     raise ValueError(f"unknown provider: {provider_id}")

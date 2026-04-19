@@ -123,6 +123,15 @@ SCANNER_EXIT_POLICY: dict[str, dict[str, Any]] = {
         "findings_codes": set(),
         "error_codes": set(range(1, 256)) - {130},
     },
+    "dependency_track": {
+        # Dependency-Track is an HTTP server, not a CLI tool.  There are no
+        # process exit codes — results arrive via REST API responses (200 OK
+        # with a JSON array, 401/403/404 for auth/lookup errors, etc.).
+        # This entry exists for registry consistency only; classify_exit() is
+        # never called for this scanner in normal operation.
+        "findings_codes": set(),
+        "error_codes": set(),
+    },
 }
 
 # Universal constants applied *before* per-scanner policy is checked.

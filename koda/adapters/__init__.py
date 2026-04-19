@@ -6,11 +6,13 @@ from typing import Any
 from .anthropic_api import AnthropicAPIProvider
 from .azure_openai import AzureOpenAIProvider
 from .base import Message, Provider, ProviderResponse, Role, ToolCall, ToolChoice, ToolSpec
+from .bedrock import BedrockProvider
 from .claude_cli import ClaudeCLIProvider
 from .gemini import GeminiProvider
 from .llamacpp import LlamaCppProvider
 from .ollama import OllamaProvider
 from .openai_compat import OpenAICompatProvider
+from .vertex_ai import VertexAIProvider
 
 # Providers that share the OpenAI-compat adapter differ only in their
 # endpoint + env var. Listing them here lets create_provider inject the
@@ -40,6 +42,10 @@ _DIRECT: dict[str, type[Provider]] = {
     "llamacpp": LlamaCppProvider,
     "llama_cpp": LlamaCppProvider,
     "ollama": OllamaProvider,
+    "vertex_ai": VertexAIProvider,
+    "vertex": VertexAIProvider,
+    "bedrock": BedrockProvider,
+    "aws_bedrock": BedrockProvider,
 }
 
 # Friendly aliases for providers where the user might use a common name.
@@ -91,5 +97,7 @@ __all__ = [
     "OllamaProvider",
     "OpenAICompatProvider",
     "GeminiProvider",
+    "VertexAIProvider",
+    "BedrockProvider",
     "create_provider",
 ]

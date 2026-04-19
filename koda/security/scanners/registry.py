@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from ..findings import Severity, UnifiedFinding
 from ..sarif.parser import SarifLog
 from .exit_codes import ExitStatus, classify_exit
@@ -82,7 +84,16 @@ def _run_cmd(
 
 
 def detect_installed_scanners() -> dict[str, bool]:
-    """Check which security scanners are available on the system."""
+    """Check which security scanners are available on the system.
+
+    For CLI scanners the check is ``shutil.which`` (binary on PATH).
+    For server-backed scanners (Dependency-Track) availability is
+    signalled by environment variables instead of a binary:
+      - ``KODA_DTRACK_URL``    — base URL of the running DT instance
+      - ``KODA_DTRACK_API_KEY`` — API key for authentication
+    Both must be set (non-empty) for ``dependency_track`` to be considered
+    available.
+    """
     scanners = {
         "semgrep": "semgrep",
         "trivy": "trivy",
@@ -96,7 +107,13 @@ def detect_installed_scanners() -> dict[str, bool]:
         "kics": "kics",
         "falco": "falco",
     }
-    return {name: shutil.which(binary) is not None for name, binary in scanners.items()}
+    result = {name: shutil.which(binary) is not None for name, binary in scanners.items()}
+    # Dependency-Track is a running HTTP server — detect via env vars, not PATH.
+    result["dependency_track"] = bool(
+        os.environ.get("KODA_DTRACK_URL", "").strip()
+        and os.environ.get("KODA_DTRACK_API_KEY", "").strip()
+    )
+    return result
 
 
 # ── Scanner implementations ─────────────────────────────────────────
@@ -841,6 +858,169 @@ def run_falco(target: str, rules: str | None = None, timeout: int = 60,
                       elapsed=elapsed, command=" ".join(cmd), exit_status=exit_status)
 
 
+def run_dependency_track(
+    project_uuid: str,
+    *,
+    base_url: str,
+    api_key: str,
+    timeout: int = 30,
+) -> ScanResult:
+    """Query Dependency-Track for findings on an already-uploaded project.
+
+    Unlike CLI-based scanners, Dependency-Track is a running HTTP server.
+    This function performs a single GET request against the DT REST API and
+    maps the returned findings to :class:`UnifiedFinding` objects.
+
+    Args:
+        project_uuid: UUID of the project in Dependency-Track.
+        base_url:     Base URL of the DT instance, e.g. ``https://dtrack.example.com``.
+        api_key:      Dependency-Track API key (``X-Api-Key`` header).
+        timeout:      HTTP request timeout in seconds (default 30).
+
+    Returns:
+        A :class:`ScanResult`.  Suppressed findings (``analysis.isSuppressed``
+        == True) are excluded — they represent triaged false-positives.
+
+    Note on dispatch mismatch:
+        All other scanner runners accept ``target: str`` (a filesystem path or
+        URL).  This runner accepts ``project_uuid`` instead.  The standard
+        :class:`ScannerRegistry` dispatch (``registry.run(scanner, target)``)
+        cannot forward ``base_url`` / ``api_key`` through the generic interface
+        without kwargs.  Call ``run_dependency_track`` directly, or use
+        ``registry.run("dependency_track", project_uuid,
+        base_url=..., api_key=...)`` — the kwargs are forwarded as-is.
+    """
+    start = time.monotonic()
+    url = f"{base_url.rstrip('/')}/api/v1/finding/project/{project_uuid}"
+    headers = {"X-Api-Key": api_key, "Accept": "application/json"}
+
+    try:
+        response = httpx.get(url, headers=headers, timeout=timeout)
+    except httpx.TimeoutException:
+        elapsed = time.monotonic() - start
+        return ScanResult(
+            False, "dependency_track",
+            error=f"Request timed out after {timeout}s connecting to {base_url}",
+            elapsed=elapsed, exit_status=ExitStatus.ERROR,
+        )
+    except httpx.RequestError as exc:
+        elapsed = time.monotonic() - start
+        return ScanResult(
+            False, "dependency_track",
+            error=f"Network error reaching {base_url}: {exc}",
+            elapsed=elapsed, exit_status=ExitStatus.ERROR,
+        )
+
+    elapsed = time.monotonic() - start
+
+    if response.status_code in (401, 403):
+        return ScanResult(
+            False, "dependency_track",
+            error=f"Authentication failed (HTTP {response.status_code}): check KODA_DTRACK_API_KEY",
+            elapsed=elapsed, exit_status=ExitStatus.ERROR,
+        )
+    if response.status_code == 404:
+        return ScanResult(
+            False, "dependency_track",
+            error=f"Project '{project_uuid}' not found in Dependency-Track (HTTP 404)",
+            elapsed=elapsed, exit_status=ExitStatus.ERROR,
+        )
+    if response.status_code != 200:
+        return ScanResult(
+            False, "dependency_track",
+            error=f"Unexpected HTTP {response.status_code} from Dependency-Track: {response.text[:300]}",
+            elapsed=elapsed, exit_status=ExitStatus.ERROR,
+        )
+
+    try:
+        raw_findings: list[dict[str, Any]] = response.json()
+    except Exception as exc:
+        return ScanResult(
+            False, "dependency_track",
+            error=f"Failed to parse JSON response: {exc}",
+            elapsed=elapsed, exit_status=ExitStatus.ERROR,
+        )
+
+    findings: list[UnifiedFinding] = []
+    for item in raw_findings:
+        # --- suppression filter ---
+        analysis = item.get("analysis") or {}
+        if analysis.get("isSuppressed", False):
+            continue
+
+        vuln: dict[str, Any] = item.get("vulnerability") or {}
+        component: dict[str, Any] = item.get("component") or {}
+
+        vuln_id: str = vuln.get("vulnId", "") or ""
+        source: str = vuln.get("source", "") or ""
+        description: str = vuln.get("description", "") or ""
+
+        # Severity: DT uses CRITICAL/HIGH/MEDIUM/LOW/INFO/UNASSIGNED
+        sev_str: str = (vuln.get("severity") or "UNKNOWN").upper()
+        if sev_str == "UNASSIGNED":
+            sev = Severity.UNKNOWN
+        else:
+            sev = Severity.from_str(sev_str)
+
+        # CVE: only attach when the source is NVD and the ID is CVE-prefixed
+        cve_list: list[str] = []
+        if source.upper() == "NVD" and vuln_id.upper().startswith("CVE-"):
+            cve_list = [vuln_id]
+
+        # CVSS: prefer V3 base score, fall back to V2
+        cvss_score: float = 0.0
+        v3 = vuln.get("cvssV3BaseScore")
+        v2 = vuln.get("cvssV2BaseScore")
+        if isinstance(v3, (int, float)) and v3 > 0:
+            cvss_score = float(v3)
+        elif isinstance(v2, (int, float)) and v2 > 0:
+            cvss_score = float(v2)
+
+        # CWE
+        cwe_list: list[str] = []
+        cwe_obj = vuln.get("cwe") or {}
+        if isinstance(cwe_obj, dict):
+            cwe_id = cwe_obj.get("cweId")
+            if cwe_id is not None:
+                cwe_list = [f"CWE-{cwe_id}"]
+        elif isinstance(cwe_obj, (int, str)) and str(cwe_obj):
+            cwe_list = [f"CWE-{cwe_obj}"]
+
+        comp_name: str = component.get("name", "") or ""
+        comp_version: str = component.get("version", "") or ""
+        purl: str = component.get("purl", "") or ""
+
+        # Use PURL as file_path proxy — it uniquely identifies the component.
+        file_path_proxy = purl or comp_name
+
+        f = UnifiedFinding(
+            id=UnifiedFinding.make_id(
+                "dependency_track", vuln_id, file_path_proxy, 0
+            ),
+            scanner="dependency_track",
+            rule_id=vuln_id,
+            severity=sev,
+            title=f"{vuln_id} in {comp_name} {comp_version}".strip(),
+            description=description,
+            file_path=file_path_proxy,
+            cve=cve_list,
+            cwe=cwe_list,
+            cvss_score=cvss_score,
+            raw=item,
+        )
+        findings.append(f)
+
+    exit_status = ExitStatus.FINDINGS if findings else ExitStatus.SUCCESS
+    return ScanResult(
+        True, "dependency_track",
+        output=raw_findings,
+        findings=findings,
+        elapsed=elapsed,
+        command=url,
+        exit_status=exit_status,
+    )
+
+
 def run_sarif_file(path: str) -> ScanResult:
     """Parse a SARIF file directly and extract findings."""
     start = time.monotonic()
@@ -859,7 +1039,21 @@ def run_sarif_file(path: str) -> ScanResult:
 
 # ── Scanner Registry ────────────────────────────────────────────────
 
-# Maps scanner names to their runner functions
+# Maps scanner names to their runner functions.
+#
+# Note on dependency_track dispatch:
+#   All other runners share the signature ``(target: str, **kwargs)``.
+#   run_dependency_track takes ``(project_uuid: str, *, base_url, api_key, ...)``
+#   instead — it is URL-based, not file-based.  ScannerRegistry.run() forwards
+#   kwargs transparently, so callers must supply ``base_url`` and ``api_key``
+#   as keyword arguments:
+#
+#       registry.run("dependency_track", project_uuid,
+#                    base_url="https://dtrack.example.com",
+#                    api_key="...")
+#
+#   run_all() will skip dependency_track automatically because it requires
+#   these extra kwargs that the generic path cannot supply.
 _SCANNER_MAP: dict[str, Callable[..., ScanResult]] = {
     "semgrep": run_semgrep,
     "trivy": run_trivy,
@@ -873,6 +1067,9 @@ _SCANNER_MAP: dict[str, Callable[..., ScanResult]] = {
     "kics": run_kics,
     "falco": run_falco,
     "sarif": run_sarif_file,
+    # dependency_track uses project_uuid (not a path) + base_url/api_key kwargs;
+    # see comment above for dispatch details.
+    "dependency_track": run_dependency_track,
 }
 
 

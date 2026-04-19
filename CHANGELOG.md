@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Remote evidence bundle sync** (`koda remote push|pull|list`) for
+  S3-compatible object storage (AWS S3, Cloudflare R2, MinIO). Uploads
+  a bundle plus a plain-text `.sha256` sidecar so pulls on a fresh
+  machine can verify integrity with stdlib-only tooling. boto3 stays
+  optional/lazy. Credentials never appear in captured output. Every
+  push/pull/list is audit-logged.
+- **Dependency-Track scanner wrapper** — queries a running DT server
+  (`KODA_DTRACK_URL` + `KODA_DTRACK_API_KEY`) via REST API, maps findings
+  into `UnifiedFinding`, filters suppressed entries, preserves CVSS v3
+  over v2 and CWE extraction.
+- **Two more provider adapters**: Google Vertex AI (enterprise Gemini
+  with ADC or explicit token; default `gemini-1.5-pro-002`) and AWS
+  Bedrock (Converse API; default `anthropic.claude-3-5-sonnet-20241022-v2:0`
+  in `us-east-1`). Both use lazy imports so optional deps
+  (`google-auth`, `boto3`) stay optional.
+- **Release workflow now publishes CycloneDX SBOMs** (`sbom.cdx.json` +
+  `.xml`) alongside each wheel on the GitHub Release. `SOURCE_DATE_EPOCH`
+  pinned to the tag commit timestamp for reproducible builds.
+- **Compatibility documentation** (`docs/compatibility.md`) — public API
+  surface, deprecation policy, supported Python versions, artifact
+  compatibility guarantees.
+
+### Added (v0.6 Wave 1)
 - **Engagement templates** (`koda new --template pentest|ir|audit`) with
   per-template defaults for approval tier, scanners, ATT&CK phases, and
   report style. Writes `engagement.toml` under
