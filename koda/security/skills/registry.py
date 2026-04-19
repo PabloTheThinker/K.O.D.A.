@@ -1,13 +1,14 @@
 """Skill registry: lookup skills by mode/phase/technique/name.
 
-The default registry is populated with every ``ALL_RED_SKILLS`` entry at
-import time. Blue and purple packs will register themselves into
-``DEFAULT_REGISTRY`` the same way when Phase 3/4 ships.
+The default registry is populated with every ``ALL_RED_SKILLS`` and
+``ALL_BLUE_SKILLS`` entry at import time. The purple pack will register
+itself into ``DEFAULT_REGISTRY`` the same way when Phase 4 ships.
 """
 from __future__ import annotations
 
 from koda.security.modes import SecurityMode
 from koda.security.skills.base import Skill
+from koda.security.skills.blue import ALL_BLUE_SKILLS
 from koda.security.skills.red import ALL_RED_SKILLS
 
 
@@ -19,6 +20,8 @@ class SkillRegistry:
         self._by_mode_phase: dict[tuple[SecurityMode, str], list[Skill]] = {}
         self._by_technique: dict[str, list[Skill]] = {}
         for skill in ALL_RED_SKILLS:
+            self.register(skill)
+        for skill in ALL_BLUE_SKILLS:
             self.register(skill)
 
     def register(self, skill: Skill) -> None:
