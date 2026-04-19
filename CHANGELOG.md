@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Guardian pre-filter** (`koda/security/guardian.py`) — cheap regex
+  detector that runs before the LLM call and tool dispatch. Catches
+  prompt injection, destructive shell commands, and sensitive-data writes
+  in `strict` / `balanced` / `permissive` modes. Append-only incident log
+  with bounded tail, JSON save/load state. Ported from
+  `koda-agent/koda/cognition/guardian.py` — stripped of the cognitive-
+  module base; acts the same on turn 1 as on turn 1000.
+- **Context compressor** (`koda/session/compressor.py`) — keeps the
+  system prompt, the first exchange, and the last N messages at full
+  fidelity; replaces the middle with a security-aware summary
+  (user requests, tool counts, errors, refused approvals, ATT&CK IDs,
+  CVE IDs). No LLM calls in the hot path by default; optional
+  LLM-backed summarization with graceful fallback.
+- **Reflection engine** (`koda/agent/reflection.py`) — bounded journal
+  of per-turn outcomes with pattern extraction (`recent_hint()`,
+  `get_patterns()`) suitable for post-engagement retrospectives and
+  light system-prompt nudges.
+- **Two more built-in skill packs** ported from `koda-cli-legacy`:
+  `log-analyzer` (blue/hunt, T1078/T1110/T1098 — journalctl auth triage)
+  and `port-monitor` (blue/hunt, T1571/T1021/T1090 — listener drift
+  detection).
+- Test suites: `test_guardian.py` (13 tests), `test_compressor.py` (6),
+  `test_reflection.py` (6) — 38 total with existing coverage.
+
 ## [0.3.0] — 2026-04-19
 
 Framework turn: external skill packs, rule-based NLU, operator persona.
