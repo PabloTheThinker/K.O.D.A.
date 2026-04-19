@@ -195,6 +195,29 @@ no third-party dependencies.
 An **MCP server** is also available: `koda mcp` exposes the scanner and
 evidence tools to any MCP-compatible client (stdio + SSE transports).
 
+## Security Harness
+
+K.O.D.A. ships with a phase-aware security harness that turns any
+connected model into a disciplined operator — red, blue, or purple.
+
+```
+koda intel sync --all              # offline corpus: KEV, EPSS, CWE, NVD,
+                                   #   ExploitDB, MITRE ATT&CK, CAPEC
+koda intel lookup CVE-2021-44228   # full chain: CVE → KEV → EPSS → CWE
+                                   #   → linked exploits → ATT&CK
+koda report generate \             # exec, technical, Markdown, SARIF 2.1
+  --findings findings.jsonl --out ./reports
+```
+
+Red mode exposes 8 phase skills (recon → enumeration → initial access →
+execution → persistence → privesc → lateral → exfil). Blue mode exposes
+6 (defense, hunt, triage, IR, forensics, hardening). Each phase injects
+its own ATT&CK-tagged skill fragment into the system prompt so the
+model reasons in TTPs, not in ad-hoc prose. A Rules-of-Engagement gate
+enforces scope (CIDR/hostname), blocks destructive actions, and logs
+every decision to `<KODA_HOME>/engagements/<roe_id>/roe.jsonl`. Sigma
+rules, CIS audits, and NIST 800-61 IR playbooks are bundled. Stdlib-only.
+
 ## Status & Roadmap
 
 Beta. The harness, 11 provider adapters, grounding verifier, approval gate,
