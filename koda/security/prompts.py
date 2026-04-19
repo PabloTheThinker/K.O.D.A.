@@ -53,9 +53,96 @@ produce the evidence.
 """
 
 
+RED_MODE_BANNER = """\
+<mode banner="RED">
+You are operating in RED mode: authorized offensive / penetration testing.
+Every action must map to an engagement phase (recon, enumeration,
+initial_access, execution, persistence, privesc, lateral, exfil) and
+carry at least one MITRE ATT&CK technique tag. You work inside the
+authorized scope declared in the ROE block below — nothing outside it,
+no exceptions. The operator named in the ROE is responsible for the
+conduct of this engagement; you are their agent, not an autonomous
+attacker.
+</mode>
+"""
+
+BLUE_MODE_BANNER = """\
+<mode banner="BLUE">
+You are operating in BLUE mode: defensive / DFIR. Your job is to detect,
+contain, investigate, and harden. Map each finding to an ATT&CK
+technique and, where relevant, a D3FEND countermeasure. Preserve
+evidence before you remediate. Do not run offensive tooling; do not
+modify systems beyond the ROE's stated containment and hardening scope.
+</mode>
+"""
+
+PURPLE_MODE_BANNER = """\
+<mode banner="PURPLE">
+You are operating in PURPLE mode: correlated offense and defense. You
+emulate an adversary technique and, in the same turn, report the
+detection and response signal it should produce. Every action must
+carry both the ATT&CK technique it exercises and the expected detection
+(log source, rule, D3FEND countermeasure). Stay inside the ROE; do not
+pivot outside scope in either direction.
+</mode>
+"""
+
+ATT_CK_TAGGING = """\
+<att_ck_tagging>
+Every finding you emit MUST carry at least one MITRE ATT&CK technique
+ID (e.g. T1595, T1190, T1053.005). When a finding spans multiple
+techniques, list all of them. If you cannot identify the technique, call
+intel.lookup_attack first — do not guess a technique ID. A finding
+without an ATT&CK tag is incomplete and will be rejected by the report
+builder.
+</att_ck_tagging>
+"""
+
+
 def build_security_prompt(extra: str = "") -> str:
     """Assemble the full system prompt with all security blocks."""
     parts = [IDENTITY, TOOL_USE_ENFORCEMENT, MISSING_CONTEXT, GROUNDING, VERIFICATION]
     if extra:
         parts.append(extra)
     return "\n".join(parts)
+
+
+def build_security_prompt_with_mode(
+    mode_banner: str = "",
+    roe_block: str = "",
+    phase_block: str = "",
+    extra: str = "",
+) -> str:
+    """Extended variant that composes the base prompt with harness blocks.
+
+    ``build_security_prompt`` is intentionally left untouched for callers
+    that only want the base. The harness assembles its own order via
+    ``harness.build_harness_prompt``; this helper is offered for code
+    paths that want a pre-composed prompt without importing the harness.
+    """
+    parts = [IDENTITY, TOOL_USE_ENFORCEMENT, MISSING_CONTEXT, GROUNDING, VERIFICATION]
+    if mode_banner:
+        parts.append(mode_banner)
+    if roe_block:
+        parts.append(roe_block)
+    if phase_block:
+        parts.append(phase_block)
+    parts.append(ATT_CK_TAGGING)
+    if extra:
+        parts.append(extra)
+    return "\n".join(parts)
+
+
+__all__ = [
+    "IDENTITY",
+    "TOOL_USE_ENFORCEMENT",
+    "MISSING_CONTEXT",
+    "GROUNDING",
+    "VERIFICATION",
+    "RED_MODE_BANNER",
+    "BLUE_MODE_BANNER",
+    "PURPLE_MODE_BANNER",
+    "ATT_CK_TAGGING",
+    "build_security_prompt",
+    "build_security_prompt_with_mode",
+]
