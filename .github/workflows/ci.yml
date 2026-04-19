@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install "ruff>=0.5"
+      - run: ruff check koda
+
+  build:
+    name: Install + import (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install from source
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          pip install --upgrade pip
+          pip install .
+      - name: Import smoke
+        run: |
+          . .venv/bin/activate
+          python -c "import koda; import koda.cli; import koda.cli.wizard; import koda.adapters; import koda.security.guardrails; import koda.tools.approval"
+      - name: CLI help smoke
+        run: |
+          . .venv/bin/activate
+          koda --help
+
+  installer:
+    name: install.sh smoke (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run installer against checkout
+        run: |
+          mkdir -p /tmp/koda-ci
+          # Simulate the curl|bash path by running install.sh against a throwaway dir,
+          # but skip the network clone by pre-seeding .source from the workspace.
+          mkdir -p /tmp/koda-ci/.source
+          cp -r . /tmp/koda-ci/.source/
+          # Install uv and run the bits of install.sh that don't require a live clone.
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          export PATH="$HOME/.local/bin:$PATH"
+          uv venv /tmp/koda-ci/.venv --python 3.11 --quiet
+          VIRTUAL_ENV=/tmp/koda-ci/.venv uv pip install --reinstall --no-cache /tmp/koda-ci/.source
+          /tmp/koda-ci/.venv/bin/koda --help
+          KODA_ACCEPT_RISK=1 KODA_HOME=/tmp/koda-ci-home /tmp/koda-ci/.venv/bin/koda setup < /dev/null
+          test -f /tmp/koda-ci-home/config.yaml
+          /tmp/koda-ci/.venv/bin/koda doctor
