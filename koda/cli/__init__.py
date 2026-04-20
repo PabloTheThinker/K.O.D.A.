@@ -578,27 +578,40 @@ _INSTALLER_URL = "https://koda.vektraindustries.com/install"
 
 
 def _cmd_update(argv: list[str]) -> int:
-    """Update K.O.D.A. in place by re-running the hosted installer.
+    """Update K.O.D.A. in place.
 
-    Preserves the existing install directory and venv; the installer does
-    `git pull --ff-only` when .source/ is already a clone. Runs with
-    --no-wizard so user config stays untouched.
+    Fast path: if the install has a ``.source/`` git clone, fetch, show a
+    summary (current → latest, commit count, changelog preview), prompt,
+    then ``git pull --ff-only`` and reinstall deps only when pyproject.toml
+    actually changed between revisions.
+
+    Fallback (``--installer``): re-run the hosted curl | bash installer —
+    slower, but covers exotic install layouts.
     """
     import shutil
     import subprocess
     from pathlib import Path
 
     if argv and argv[0] in {"-h", "--help"}:
-        print("usage: koda update [--branch NAME] [--dir PATH] [--url URL]")
+        print("usage: koda update [--check] [--yes] [--branch NAME] [--dir PATH]")
+        print("                   [--installer] [--url URL] [--force]")
         print()
-        print("  --branch NAME   git branch to pull (default: main)")
-        print("  --dir PATH      install directory (default: auto-detected)")
-        print("  --url URL       installer URL (default: hosted)")
+        print("  --check          check for updates, don't apply them")
+        print("  --yes, -y        skip the confirmation prompt")
+        print("  --branch NAME    git branch to track (default: main)")
+        print("  --dir PATH       install directory (default: auto-detected)")
+        print("  --installer      bypass git and re-run the hosted installer")
+        print("  --url URL        installer URL (default: hosted)")
+        print("  --force          proceed even with uncommitted local changes")
         return 0
 
     branch = "main"
     install_dir: str | None = None
     url = _INSTALLER_URL
+    use_installer = False
+    check_only = False
+    assume_yes = False
+    force = False
 
     i = 0
     while i < len(argv):
@@ -609,16 +622,42 @@ def _cmd_update(argv: list[str]) -> int:
             install_dir = argv[i + 1]; i += 2; continue
         if a == "--url" and i + 1 < len(argv):
             url = argv[i + 1]; i += 2; continue
+        if a == "--installer":
+            use_installer = True; i += 1; continue
+        if a == "--check":
+            check_only = True; i += 1; continue
+        if a in ("--yes", "-y"):
+            assume_yes = True; i += 1; continue
+        if a == "--force":
+            force = True; i += 1; continue
         print(f"unknown flag: {a}", file=sys.stderr)
         return 2
 
-    # Auto-detect install dir from sys.prefix (the venv root). Don't use
-    # sys.executable.resolve() — uv symlinks .venv/bin/python to system
-    # python, which would send us into /usr.
     if install_dir is None:
-        candidate = Path(sys.prefix).parent  # .venv -> {install}
-        if (candidate / ".source" / ".git").exists():
-            install_dir = str(candidate)
+        install_dir = _detect_install_dir()
+
+    source_dir = Path(install_dir) / ".source" if install_dir else None
+    has_git_source = (
+        source_dir is not None
+        and (source_dir / ".git").exists()
+        and shutil.which("git") is not None
+    )
+
+    if has_git_source and not use_installer:
+        return _update_via_git(
+            source_dir=source_dir,  # type: ignore[arg-type]
+            install_dir=Path(install_dir),  # type: ignore[arg-type]
+            branch=branch,
+            check_only=check_only,
+            assume_yes=assume_yes,
+            force=force,
+        )
+
+    # ── Installer fallback ────────────────────────────────────────
+    if check_only:
+        print("--check requires a git-based install; run `koda update --installer` instead.",
+              file=sys.stderr)
+        return 1
 
     if not shutil.which("curl"):
         print("error: curl not found on PATH", file=sys.stderr)
@@ -635,7 +674,6 @@ def _cmd_update(argv: list[str]) -> int:
     if install_dir:
         bash_args += ["--dir", install_dir]
 
-    # curl URL | bash -s -- <args...>
     cmd = f"curl -fsSL {url} | bash -s -- " + " ".join(
         f"'{a}'" if " " in a else a for a in bash_args
     )
@@ -650,6 +688,214 @@ def _cmd_update(argv: list[str]) -> int:
     else:
         print(f"\n✗ update failed (rc={result.returncode})", file=sys.stderr)
     return result.returncode
+
+
+def _detect_install_dir() -> str | None:
+    """Auto-detect install dir from sys.prefix (the venv root).
+
+    Don't use sys.executable.resolve() — uv symlinks .venv/bin/python to
+    system python, which would send us into /usr.
+    """
+    from pathlib import Path
+    candidate = Path(sys.prefix).parent  # .venv -> {install}
+    if (candidate / ".source" / ".git").exists():
+        return str(candidate)
+    return None
+
+
+def _git(source_dir, *args: str, check: bool = True) -> "subprocess.CompletedProcess[str]":  # type: ignore[name-defined]
+    import subprocess
+    return subprocess.run(
+        ["git", "-C", str(source_dir), *args],
+        check=check,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _update_via_git(
+    *,
+    source_dir,
+    install_dir,
+    branch: str,
+    check_only: bool,
+    assume_yes: bool,
+    force: bool,
+) -> int:
+    """Git-based fast path — fetch, diff, pull, optionally reinstall."""
+    import hashlib
+    import subprocess
+
+    CYAN = "\033[36m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    DIM = "\033[2m"
+    BOLD = "\033[1m"
+    RESET = "\033[0m"
+
+    def _hash(p) -> str | None:
+        try:
+            return hashlib.sha256(p.read_bytes()).hexdigest()
+        except OSError:
+            return None
+
+    # ── Pre-flight ────────────────────────────────────────────────
+    status = _git(source_dir, "status", "--porcelain", check=False)
+    if status.returncode != 0:
+        print(f"error: git status failed: {status.stderr.strip()}", file=sys.stderr)
+        return 1
+    dirty = bool(status.stdout.strip())
+    if dirty and not force:
+        print(f"{YELLOW}⚠ uncommitted changes in {source_dir}{RESET}", file=sys.stderr)
+        print("  stash or commit first, or re-run with --force.", file=sys.stderr)
+        return 1
+
+    # Ensure target branch exists locally or on remote.
+    current_branch = _git(source_dir, "rev-parse", "--abbrev-ref", "HEAD", check=False).stdout.strip()
+    current_sha = _git(source_dir, "rev-parse", "HEAD", check=False).stdout.strip()
+    current_version = _read_version(install_dir / ".source" / "koda" / "__init__.py")
+
+    print(f"→ fetching updates ({BOLD}{branch}{RESET})…")
+    fetch = _git(source_dir, "fetch", "--quiet", "origin", branch, check=False)
+    if fetch.returncode != 0:
+        print(f"error: git fetch failed: {fetch.stderr.strip()}", file=sys.stderr)
+        return 1
+
+    remote_sha = _git(source_dir, "rev-parse", f"origin/{branch}", check=False).stdout.strip()
+    if not remote_sha:
+        print(f"error: could not resolve origin/{branch}", file=sys.stderr)
+        return 1
+
+    ahead_behind = _git(
+        source_dir, "rev-list", "--left-right", "--count",
+        f"HEAD...origin/{branch}", check=False,
+    ).stdout.strip().split()
+    ahead = int(ahead_behind[0]) if len(ahead_behind) == 2 else 0
+    behind = int(ahead_behind[1]) if len(ahead_behind) == 2 else 0
+
+    # ── Summary ───────────────────────────────────────────────────
+    short = lambda s: s[:7] if s else "—"
+    print()
+    print(f"  {DIM}current:{RESET}  {BOLD}v{current_version or '?'}{RESET}  ({short(current_sha)})")
+
+    if behind == 0 and ahead == 0:
+        print(f"  {GREEN}✓ already on latest{RESET}")
+        return 0
+
+    # Peek at remote version
+    remote_init = _git(
+        source_dir, "show", f"origin/{branch}:koda/__init__.py", check=False,
+    ).stdout
+    remote_version = _extract_version(remote_init) or "?"
+    print(f"  {DIM}latest:{RESET}   {BOLD}v{remote_version}{RESET}  ({short(remote_sha)})")
+
+    if ahead > 0 and behind == 0:
+        print(f"\n  {YELLOW}⚠ your branch is {ahead} commit(s) ahead of origin/{branch}.{RESET}")
+        print("    nothing to pull.")
+        return 0
+
+    if ahead > 0 and behind > 0 and not force:
+        print(f"\n  {YELLOW}⚠ diverged: {ahead} ahead, {behind} behind origin/{branch}.{RESET}",
+              file=sys.stderr)
+        print("    resolve manually or re-run with --force (rebases onto remote).",
+              file=sys.stderr)
+        return 1
+
+    # Dep drift check
+    pyproject = source_dir / "pyproject.toml"
+    old_pyproject_hash = _hash(pyproject)
+    remote_pyproject = _git(
+        source_dir, "show", f"origin/{branch}:pyproject.toml", check=False,
+    )
+    deps_changed = (
+        remote_pyproject.returncode == 0
+        and old_pyproject_hash is not None
+        and hashlib.sha256(remote_pyproject.stdout.encode()).hexdigest() != old_pyproject_hash
+    )
+
+    # Files changed + commit count
+    files_changed = _git(
+        source_dir, "diff", "--name-only", f"HEAD..origin/{branch}", check=False,
+    ).stdout.strip().splitlines()
+
+    print(f"\n  {BOLD}{behind}{RESET} commit(s) · {BOLD}{len(files_changed)}{RESET} file(s) changed"
+          + (f" · {YELLOW}deps changed{RESET}" if deps_changed else ""))
+
+    # Changelog preview (up to 8)
+    log = _git(
+        source_dir, "log", "--oneline", "--no-decorate",
+        f"HEAD..origin/{branch}", "-n", "8", check=False,
+    ).stdout.strip()
+    if log:
+        print(f"\n  {DIM}recent:{RESET}")
+        for line in log.splitlines():
+            print(f"    {CYAN}{line}{RESET}")
+        if behind > 8:
+            print(f"    {DIM}… and {behind - 8} more{RESET}")
+
+    if check_only:
+        print(f"\n  run {BOLD}koda update{RESET} to apply.")
+        return 0
+
+    # ── Confirm ───────────────────────────────────────────────────
+    if not assume_yes:
+        print()
+        try:
+            answer = input("  apply update? [Y/n] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\naborted", file=sys.stderr)
+            return 130
+        if answer and answer not in ("y", "yes"):
+            print("aborted.", file=sys.stderr)
+            return 0
+
+    # ── Pull ──────────────────────────────────────────────────────
+    print(f"\n→ pulling…")
+    pull_args = ["pull", "--ff-only", "origin", branch]
+    if force and ahead > 0 and behind > 0:
+        pull_args = ["pull", "--rebase", "origin", branch]
+    pull = _git(source_dir, *pull_args, check=False)
+    if pull.returncode != 0:
+        print(f"error: git pull failed:\n{pull.stderr.strip()}", file=sys.stderr)
+        return 1
+
+    # ── Reinstall deps only if pyproject.toml changed ─────────────
+    if deps_changed:
+        print(f"→ reinstalling dependencies (pyproject.toml changed)…")
+        venv_python = install_dir / ".venv" / "bin" / "python"
+        if not venv_python.exists():
+            print(f"  {YELLOW}warn: {venv_python} not found — skipping reinstall{RESET}",
+                  file=sys.stderr)
+        else:
+            rc = subprocess.call(
+                [str(venv_python), "-m", "pip", "install", "--quiet", "-e", str(source_dir)],
+            )
+            if rc != 0:
+                print(f"error: dependency install failed (rc={rc})", file=sys.stderr)
+                return rc
+
+    new_version = _read_version(install_dir / ".source" / "koda" / "__init__.py")
+    print()
+    if new_version and new_version != current_version:
+        print(f"{GREEN}✓{RESET} updated: v{current_version} → {BOLD}v{new_version}{RESET}")
+    else:
+        print(f"{GREEN}✓{RESET} updated ({short(current_sha)} → {short(remote_sha)})")
+    print(f"  restart any running `koda` sessions.")
+    return 0
+
+
+def _extract_version(init_source: str) -> str | None:
+    """Pull __version__ string out of a koda/__init__.py blob."""
+    import re
+    m = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', init_source)
+    return m.group(1) if m else None
+
+
+def _read_version(init_path) -> str | None:
+    try:
+        return _extract_version(init_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError):
+        return None
 
 
 def _cmd_uninstall(argv: list[str]) -> int:
