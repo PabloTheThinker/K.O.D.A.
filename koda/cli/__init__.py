@@ -503,6 +503,7 @@ def main(argv: list[str] | None = None) -> int:
         print("       koda remote push|pull|list  sync evidence bundles to/from S3/R2/MinIO")
         print("       koda update                 pull + install the latest release")
         print("       koda check                  run repo linter + tests (pre-push hygiene)")
+        print("       koda learn <cmd>            promote Helix concepts → skill drafts")
         print("       koda uninstall              remove K.O.D.A. (interactive checklist)")
         print("       koda profile <cmd>          list | create | use | delete | show")
         print("       koda version                print version and exit")
@@ -549,6 +550,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if argv and argv[0] == "check":
         return _cmd_check(argv[1:])
+
+    if argv and argv[0] == "learn":
+        from .learn import main as learn_main
+        return learn_main(argv[1:])
 
     if argv and argv[0] == "uninstall":
         return _cmd_uninstall(argv[1:])
