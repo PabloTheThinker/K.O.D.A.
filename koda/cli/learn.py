@@ -7,6 +7,7 @@ Subcommands:
     koda learn approve <name>      promote pending/<name> → _learned/<name>
     koda learn reject  <name>      archive pending/<name> under _rejected/
     koda learn status              pipeline metrics
+    koda learn schedule <action>   manage nightly cron entry
 """
 from __future__ import annotations
 
@@ -18,6 +19,12 @@ from koda.learning import (
     draft_skill_from_concept,
     find_candidates,
     scan_skill_draft,
+)
+from koda.learning.schedule import (
+    DEFAULT_CRON_EXPR,
+    get_learn_schedule,
+    install_learn_schedule,
+    remove_learn_schedule,
 )
 
 _GREEN = "\033[32m"
@@ -46,6 +53,8 @@ def main(argv: list[str]) -> int:
         return _cmd_reject(rest)
     if cmd == "status":
         return _cmd_status(rest)
+    if cmd == "schedule":
+        return _cmd_schedule(rest)
 
     print(f"error: unknown subcommand {cmd!r}", file=sys.stderr)
     print("run `koda learn --help` for usage", file=sys.stderr)
@@ -58,13 +67,16 @@ def _print_help() -> None:
     print("       koda learn approve <name>")
     print("       koda learn reject  <name>")
     print("       koda learn status")
+    print("       koda learn schedule [install|remove|status] [cron_expr]")
     print()
     print("  run              (default) consolidate Helix, scan for candidates,")
     print("                   write drafts to _pending/")
+    print("                   flags: --llm[=provider] --llm-model NAME")
     print("  list             show pending + approved learned skills")
     print("  approve <name>   move _pending/<name> into _learned/<name>")
     print("  reject  <name>   archive draft under _rejected/")
     print("  status           show pipeline counts")
+    print("  schedule         install or remove nightly `koda learn run` cron")
 
 
 def _cmd_run(argv: list[str]) -> int:
@@ -73,6 +85,8 @@ def _cmd_run(argv: list[str]) -> int:
     min_evidence = 5
     max_candidates = 10
     skip_consolidate = False
+    llm_provider: str | None = None
+    llm_model: str | None = None
 
     i = 0
     while i < len(argv):
@@ -90,10 +104,24 @@ def _cmd_run(argv: list[str]) -> int:
         elif arg == "--limit" and i + 1 < len(argv):
             max_candidates = int(argv[i + 1])
             i += 1
+        elif arg == "--llm":
+            llm_provider = "ollama"
+        elif arg.startswith("--llm="):
+            llm_provider = arg.split("=", 1)[1] or "ollama"
+        elif arg == "--llm-provider" and i + 1 < len(argv):
+            llm_provider = argv[i + 1]
+            i += 1
+        elif arg == "--llm-model" and i + 1 < len(argv):
+            llm_model = argv[i + 1]
+            i += 1
         else:
             print(f"error: unknown flag {arg!r}", file=sys.stderr)
             return 2
         i += 1
+
+    synth = _make_synthesizer(llm_provider, llm_model)
+    if synth is None:
+        return 1
 
     helix = _open_helix()
     if helix is None:
@@ -127,10 +155,7 @@ def _cmd_run(argv: list[str]) -> int:
         drafted = 0
         blocked = 0
         for cand in candidates:
-            draft = draft_skill_from_concept(
-                concept=cand.concept,
-                evidence_episodes=cand.episodes,
-            )
+            draft = synth(cand.concept, cand.episodes)
             report = scan_skill_draft(
                 name=draft.name,
                 description=draft.description,
@@ -273,6 +298,87 @@ def _cmd_status(argv: list[str]) -> int:
     finally:
         helix.close()
     return 0
+
+
+def _make_synthesizer(provider_name: str | None, model: str | None):
+    """Return a callable ``(concept, episodes) -> SkillDraft``.
+
+    Template synthesizer by default. If ``provider_name`` is set, build a
+    provider + wrap the async LLM synthesizer in a sync shim. Returns ``None``
+    if provider construction fails — caller prints a clean error.
+    """
+    if not provider_name:
+        def template(concept, episodes):
+            return draft_skill_from_concept(
+                concept=concept, evidence_episodes=episodes,
+            )
+        return template
+
+    try:
+        from koda.adapters import create_provider
+        from koda.learning.synthesizer_llm import draft_skill_from_concept_llm_sync
+    except ImportError as exc:
+        print(f"error: LLM synthesizer unavailable: {exc}", file=sys.stderr)
+        return None
+
+    cfg: dict[str, object] = {}
+    if model:
+        cfg["model"] = model
+    try:
+        provider = create_provider(provider_name, cfg)
+    except Exception as exc:
+        print(f"error: could not create provider {provider_name!r}: {exc}", file=sys.stderr)
+        return None
+
+    def llm(concept, episodes):
+        return draft_skill_from_concept_llm_sync(
+            concept=concept,
+            evidence_episodes=episodes,
+            provider=provider,
+        )
+    print(f"{_DIM}using LLM synthesizer: {provider_name}"
+          f"{f' / {model}' if model else ''}{_RESET}")
+    return llm
+
+
+def _cmd_schedule(argv: list[str]) -> int:
+    if not argv or argv[0] in {"-h", "--help", "status"}:
+        entry = get_learn_schedule()
+        if entry is None:
+            print(f"{_DIM}no nightly learn schedule installed{_RESET}")
+            print(f"  install: {_DIM}koda learn schedule install{_RESET}")
+            return 0
+        print(f"{_GREEN}✓ installed{_RESET}")
+        print(f"  cron:    {entry.cron_expr}")
+        print(f"  command: {entry.command}")
+        return 0
+
+    action = argv[0]
+    if action == "install":
+        cron_expr = argv[1] if len(argv) > 1 else DEFAULT_CRON_EXPR
+        try:
+            entry = install_learn_schedule(cron_expr=cron_expr)
+        except Exception as exc:
+            print(f"error: could not install cron entry: {exc}", file=sys.stderr)
+            return 1
+        print(f"{_GREEN}✓ installed{_RESET} {entry.cron_expr}  {_DIM}{entry.command}{_RESET}")
+        return 0
+
+    if action == "remove":
+        try:
+            removed = remove_learn_schedule()
+        except Exception as exc:
+            print(f"error: could not remove cron entry: {exc}", file=sys.stderr)
+            return 1
+        if removed:
+            print(f"{_GREEN}✓ removed{_RESET}")
+        else:
+            print(f"{_DIM}nothing to remove{_RESET}")
+        return 0
+
+    print(f"error: unknown schedule action {action!r}", file=sys.stderr)
+    print("usage: koda learn schedule [install [cron_expr] | remove | status]", file=sys.stderr)
+    return 2
 
 
 def _open_helix():

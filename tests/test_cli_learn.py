@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from koda.cli.learn import _cmd_list, _cmd_run, main as learn_main
+from koda.cli.learn import _cmd_list, _cmd_run
+from koda.cli.learn import main as learn_main
 from koda.learning import LearnedSkillStore
 from koda.memory.helix import Helix
 
