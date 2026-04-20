@@ -251,10 +251,12 @@ PROVIDER_CATALOG: tuple[ProviderEntry, ...] = (
     ProviderEntry(
         id="ollama_cloud",
         label="Ollama Cloud",
-        hint="API — OLLAMA_CLOUD_API_KEY, managed Ollama",
+        hint="API — OLLAMA_API_KEY, managed Ollama (e.g. gpt-oss:120b)",
         tier="cloud",
         transport="openai_compat",
-        env_keys=("OLLAMA_CLOUD_API_KEY",),
+        # Official Ollama docs use OLLAMA_API_KEY. OLLAMA_CLOUD_API_KEY
+        # kept as a secondary alias so older configs keep working.
+        env_keys=("OLLAMA_API_KEY", "OLLAMA_CLOUD_API_KEY"),
         base_url="https://ollama.com/v1",
         base_url_env="OLLAMA_CLOUD_BASE_URL",
     ),

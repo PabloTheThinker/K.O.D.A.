@@ -40,7 +40,7 @@ If you want a security agent that can be trusted with a real engagement — auth
 <tr><td><b>External skill packs</b></td><td>Drop a <code>SKILL.md</code> directory into <code>skills/</code> and it auto-registers. Frontmatter drives mode/phase/ATT&CK mapping; markdown body becomes the operator playbook. Ships with <code>sherlock</code>, <code>oss-forensics</code>, <code>1password</code>; community packs compose.</td></tr>
 <tr><td><b>Rule-based NLU router</b></td><td>Pure-Python intent classifier (recon / exploit / IR / audit / lookup / admin / chat) runs before every LLM call. Extracts targets (domains, IPv4, usernames, CVEs, paths), infers risk tier, ranks matching skills, emits a <code>turn.route</code> audit event. No LLM calls in the hot path.</td></tr>
 <tr><td><b>Red / Blue / Purple harness</b></td><td>Phase-aware operator voice — 8 red phases (recon → exfil), 6 blue phases (defense, hunt, triage, IR, forensics, hardening). Every finding carries an ATT&CK technique ID. Sigma rules, CIS audits, and NIST 800-61 IR playbooks ship with the harness.</td></tr>
-<tr><td><b>Model-agnostic</b></td><td>Eleven providers behind one adapter contract. Ollama, Claude CLI, Anthropic, OpenAI, Gemini, Groq, Together, OpenRouter, DeepSeek, xAI, Mistral. Switch with <code>koda setup</code> — no code changes.</td></tr>
+<tr><td><b>Model-agnostic</b></td><td>22 providers (2 local + 20 cloud) behind one declarative catalog. Ollama, llama.cpp, Anthropic, OpenAI, Gemini, Azure, Vertex, Bedrock, Groq, Cerebras, Fireworks, Together, OpenRouter, DeepSeek, xAI, Mistral, Perplexity, Hugging Face, NVIDIA NIM, Z.AI/GLM, Moonshot, Ollama Cloud. Switch with <code>koda setup</code> — no code changes.</td></tr>
 <tr><td><b>Remote operations</b></td><td>Telegram bridge with inline-keyboard approvals, fragment buffering, and slash-command parity with the REPL. MCP server (stdio + SSE) exposes scanners and evidence tools to any MCP-compatible client.</td></tr>
 <tr><td><b>Air-gap ready</b></td><td>Ollama local models, offline threat-intel cache (KEV, EPSS, CWE, NVD, ExploitDB, MITRE ATT&CK, CAPEC), stdlib-only verification. No outbound calls after initial corpus sync.</td></tr>
 </table>
@@ -248,21 +248,32 @@ Flow: the operator prompts, the NLU router classifies intent and risk, the provi
 
 ## Providers
 
-Eleven providers — local-first, BYO model. The wizard pings each candidate with a real chat roundtrip **before** writing config, so you know credentials work before the first engagement.
+22 providers — 2 local, 20 cloud — behind one declarative catalog (`koda/providers/catalog.py`). The wizard surfaces recommended providers first and pings each candidate with a real chat roundtrip **before** writing config, so you know credentials work before the first engagement. After verification it runs a tool-use probe and warns if the model ignores function-calling.
 
-| Provider       | Detect                                  | Key env                |
-|----------------|-----------------------------------------|------------------------|
-| Ollama         | `http://127.0.0.1:11434` reachable      | (none — local)         |
-| Claude CLI     | `claude` binary on `PATH`               | (none — CLI auth)      |
-| Anthropic      | `ANTHROPIC_API_KEY`                     | `ANTHROPIC_API_KEY`    |
-| OpenAI         | `OPENAI_API_KEY`                        | `OPENAI_API_KEY`       |
-| Google Gemini  | `GEMINI_API_KEY` / `GOOGLE_API_KEY`     | `GEMINI_API_KEY`       |
-| Groq           | `GROQ_API_KEY`                          | `GROQ_API_KEY`         |
-| Together AI    | `TOGETHER_API_KEY`                      | `TOGETHER_API_KEY`     |
-| OpenRouter     | `OPENROUTER_API_KEY`                    | `OPENROUTER_API_KEY`   |
-| DeepSeek       | `DEEPSEEK_API_KEY`                      | `DEEPSEEK_API_KEY`     |
-| xAI (Grok)     | `XAI_API_KEY` / `GROK_API_KEY`          | `XAI_API_KEY`          |
-| Mistral        | `MISTRAL_API_KEY`                       | `MISTRAL_API_KEY`      |
+| Provider        | Tier   | Detect                                          | Key env                                  |
+|-----------------|--------|-------------------------------------------------|------------------------------------------|
+| Ollama          | local  | `http://127.0.0.1:11434` reachable              | (none — local)                           |
+| llama.cpp       | local  | local server reachable                          | (none — local)                           |
+| Anthropic       | cloud  | `ANTHROPIC_API_KEY`                             | `ANTHROPIC_API_KEY`                      |
+| Google Gemini   | cloud  | `GEMINI_API_KEY` / `GOOGLE_API_KEY`             | `GEMINI_API_KEY`                         |
+| Azure OpenAI    | cloud  | `AZURE_OPENAI_API_KEY`                          | `AZURE_OPENAI_API_KEY`                   |
+| Google Vertex AI| cloud  | ADC / explicit token                            | (ADC)                                    |
+| AWS Bedrock     | cloud  | AWS credential chain                            | (AWS creds)                              |
+| OpenAI          | cloud  | `OPENAI_API_KEY`                                | `OPENAI_API_KEY`                         |
+| Groq            | cloud  | `GROQ_API_KEY`                                  | `GROQ_API_KEY`                           |
+| Cerebras        | cloud  | `CEREBRAS_API_KEY`                              | `CEREBRAS_API_KEY`                       |
+| Fireworks       | cloud  | `FIREWORKS_API_KEY`                             | `FIREWORKS_API_KEY`                      |
+| Together AI     | cloud  | `TOGETHER_API_KEY`                              | `TOGETHER_API_KEY`                       |
+| OpenRouter      | cloud  | `OPENROUTER_API_KEY`                            | `OPENROUTER_API_KEY`                     |
+| DeepSeek        | cloud  | `DEEPSEEK_API_KEY`                              | `DEEPSEEK_API_KEY`                       |
+| xAI (Grok)      | cloud  | `XAI_API_KEY` / `GROK_API_KEY`                  | `XAI_API_KEY`                            |
+| Mistral         | cloud  | `MISTRAL_API_KEY`                               | `MISTRAL_API_KEY`                        |
+| Perplexity      | cloud  | `PERPLEXITY_API_KEY`                            | `PERPLEXITY_API_KEY`                     |
+| Hugging Face    | cloud  | `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN`           | `HF_TOKEN`                               |
+| NVIDIA NIM      | cloud  | `NVIDIA_API_KEY` / `NIM_API_KEY`                | `NVIDIA_API_KEY`                         |
+| Z.AI / GLM      | cloud  | `GLM_API_KEY` / `ZAI_API_KEY`                   | `GLM_API_KEY`                            |
+| Moonshot (Kimi) | cloud  | `MOONSHOT_API_KEY` / `KIMI_API_KEY`             | `MOONSHOT_API_KEY`                       |
+| Ollama Cloud    | cloud  | `OLLAMA_API_KEY`                                | `OLLAMA_API_KEY`                         |
 
 On verification failure: retry with new creds, skip (save anyway), or abort.
 

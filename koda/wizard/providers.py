@@ -551,7 +551,7 @@ _OPENAI_SPECS: dict[str, _OpenAICompatSpec] = {
     "ollama_cloud": _OpenAICompatSpec(
         provider_id="ollama_cloud",
         label="Ollama Cloud",
-        env_key="OLLAMA_CLOUD_API_KEY",
+        env_key="OLLAMA_API_KEY",
         key_hint_prefix="",
         min_key_len=20,
         default_models=(
