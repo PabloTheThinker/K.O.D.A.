@@ -17,7 +17,7 @@ are usually out of scope — open an issue first.
 
 ```
 koda/
-  adapters/       Provider adapters (11): anthropic, claude_cli, ollama, …
+  adapters/       Provider adapters (10): anthropic, ollama, gemini, …
   agent/          Turn loop, agent state
   audit/          Append-only JSONL audit log
   auth/           Credential broker + redaction

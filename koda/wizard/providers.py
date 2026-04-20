@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -117,10 +116,6 @@ def detect_gemini_env_key() -> str | None:
         except OSError:
             return None
     return None
-
-
-def detect_claude_cli() -> str | None:
-    return shutil.which("claude")
 
 
 def detect_ollama_models(base_url: str = "http://127.0.0.1:11434") -> list[dict[str, Any]]:
@@ -293,38 +288,6 @@ def setup_anthropic(prompter: Prompter, *, existing_key: str | None = None) -> P
         model=model,
         config={},
         secrets={"ANTHROPIC_API_KEY": key} if key and not existing_key else {},
-        quota=quota,
-    )
-
-
-def setup_claude_cli(prompter: Prompter) -> ProviderSetupResult:
-    prompter.section("Claude CLI")
-
-    binary = detect_claude_cli()
-    if binary:
-        prompter.status(True, "claude binary on PATH", detail=binary)
-    else:
-        prompter.status(False, "claude binary not found")
-        prompter.note(
-            "The Claude CLI provides inference via a subprocess. Install it\n"
-            "from https://docs.claude.com/en/docs/claude-code/cli then re-run.",
-            title="Setup required",
-        )
-
-    model = prompter.text(
-        "Default model (blank uses the CLI default)",
-        default="",
-        placeholder="e.g. claude-sonnet-4-6 or leave blank",
-    )
-
-    quota = _configure_quota(prompter, scope_label="Claude CLI")
-
-    return ProviderSetupResult(
-        provider_id="claude_cli",
-        provider_label="Claude CLI",
-        model=model or "",
-        config={},
-        secrets={},
         quota=quota,
     )
 
@@ -1068,12 +1031,10 @@ __all__ = [
     "detect_xai_env_key",
     "detect_mistral_env_key",
     "detect_gemini_env_key",
-    "detect_claude_cli",
     "detect_ollama_models",
     "setup_anthropic",
     "setup_azure_openai",
     "setup_bedrock",
-    "setup_claude_cli",
     "setup_llamacpp",
     "setup_ollama",
     "setup_openai_compat",

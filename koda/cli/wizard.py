@@ -41,7 +41,6 @@ from ..wizard import (
     WizardCancelled,
     detect_anthropic_env_key,
     detect_azure_openai_env_key,
-    detect_claude_cli,
     detect_deepseek_env_key,
     detect_gemini_env_key,
     detect_groq_env_key,
@@ -55,7 +54,6 @@ from ..wizard import (
     setup_anthropic,
     setup_azure_openai,
     setup_bedrock,
-    setup_claude_cli,
     setup_gemini,
     setup_llamacpp,
     setup_ollama,
@@ -102,12 +100,6 @@ _PROVIDER_OPTIONS: tuple[_ProviderOption, ...] = (
         base_hint="local models, no API key",
         detector=detect_ollama_models,
         detail_fn=lambda v: f"{len(v)} model(s) available" if v else "not reachable",
-    ),
-    _ProviderOption(
-        value="claude_cli", label="Claude CLI",
-        base_hint="local subprocess — reuses your `claude` auth",
-        detector=detect_claude_cli,
-        detail_fn=lambda v: v or "not installed",
     ),
     _ProviderOption(
         value="anthropic", label="Anthropic (Claude)",
@@ -246,8 +238,6 @@ def _run_provider_setup(prompter: Prompter, provider_id: str) -> ProviderSetupRe
         return setup_anthropic(prompter, existing_key=detect_anthropic_env_key())
     if provider_id == "azure_openai":
         return setup_azure_openai(prompter, existing_key=detect_azure_openai_env_key())
-    if provider_id == "claude_cli":
-        return setup_claude_cli(prompter)
     if provider_id == "llamacpp":
         return setup_llamacpp(prompter)
     if provider_id == "ollama":

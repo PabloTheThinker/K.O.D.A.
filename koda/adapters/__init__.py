@@ -7,7 +7,6 @@ from .anthropic_api import AnthropicAPIProvider
 from .azure_openai import AzureOpenAIProvider
 from .base import Message, Provider, ProviderResponse, Role, ToolCall, ToolChoice, ToolSpec
 from .bedrock import BedrockProvider
-from .claude_cli import ClaudeCLIProvider
 from .gemini import GeminiProvider
 from .llamacpp import LlamaCppProvider
 from .ollama import OllamaProvider
@@ -36,7 +35,6 @@ _DIRECT: dict[str, type[Provider]] = {
     "anthropic": AnthropicAPIProvider,
     "azure_openai": AzureOpenAIProvider,
     "azure": AzureOpenAIProvider,
-    "claude_cli": ClaudeCLIProvider,
     "gemini": GeminiProvider,
     "google": GeminiProvider,
     "llamacpp": LlamaCppProvider,
@@ -92,7 +90,6 @@ __all__ = [
     "ToolSpec",
     "AnthropicAPIProvider",
     "AzureOpenAIProvider",
-    "ClaudeCLIProvider",
     "LlamaCppProvider",
     "OllamaProvider",
     "OpenAICompatProvider",

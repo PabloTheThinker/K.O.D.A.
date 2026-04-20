@@ -165,14 +165,11 @@ def _pick_provider_from_config(config: dict) -> tuple[str, dict]:
 
 
 def _pick_provider_auto() -> tuple[str, dict]:
-    import shutil
     explicit = os.environ.get("KODA_PROVIDER", "").lower().strip()
     if explicit:
         return explicit, {"model": os.environ.get("KODA_MODEL", "")}
     if os.environ.get("ANTHROPIC_API_KEY"):
         return "anthropic", {"model": os.environ.get("KODA_MODEL") or "claude-sonnet-4-6"}
-    if shutil.which("claude"):
-        return "claude_cli", {"model": os.environ.get("KODA_MODEL", "")}
     return "ollama", {"model": os.environ.get("KODA_MODEL") or "qwen3:14b"}
 
 
@@ -1559,7 +1556,7 @@ def _doctor_tools(ok: str, warn: str, shutil_mod) -> None:
         mark = ok if os.environ.get(env_var) else warn
         state = "set" if os.environ.get(env_var) else "unset"
         print(f"  {mark} {label:<14} {state}")
-    for binary in ("claude", "ollama", "nmap", "semgrep", "trivy"):
+    for binary in ("ollama", "nmap", "semgrep", "trivy"):
         path = shutil_mod.which(binary)
         mark = ok if path else warn
         print(f"  {mark} {binary:<14} {path or 'not found'}")
