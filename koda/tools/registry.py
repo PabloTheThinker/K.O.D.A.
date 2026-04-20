@@ -71,8 +71,16 @@ class ToolRegistry:
     def names(self) -> list[str]:
         return sorted(self._tools.keys())
 
-    def specs(self, include: list[str] | None = None, exclude: list[str] | None = None) -> list[ToolSpec]:
+    def specs(
+        self,
+        include: list[str] | None = None,
+        exclude: list[str] | None = None,
+        toolsets: list[str] | None = None,
+    ) -> list[ToolSpec]:
         tools = list(self._tools.values())
+        if toolsets:
+            allowed = set(toolsets)
+            tools = [t for t in tools if t.category in allowed]
         if include:
             tools = [t for t in tools if t.name in set(include)]
         if exclude:
@@ -81,6 +89,13 @@ class ToolRegistry:
 
     def by_category(self, category: str) -> list[Tool]:
         return [t for t in self._tools.values() if t.category == category]
+
+    def toolsets(self) -> dict[str, list[str]]:
+        """Return ``{toolset: [tool_name, ...]}`` sorted for stable display."""
+        groups: dict[str, list[str]] = {}
+        for tool in self._tools.values():
+            groups.setdefault(tool.category, []).append(tool.name)
+        return {ts: sorted(names) for ts, names in sorted(groups.items())}
 
     async def invoke(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         tool = self._tools.get(name)

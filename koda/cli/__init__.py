@@ -500,6 +500,7 @@ def main(argv: list[str] | None = None) -> int:
         print("       koda use <name>             activate an engagement")
         print("       koda scan remote <target>   scan a remote host over SSH (ControlMaster)")
         print("       koda schedule add|list|run  scheduled monitoring + diff alerts")
+        print("       koda tools [--toolset x]    list registered tools by toolset")
         print("       koda remote push|pull|list  sync evidence bundles to/from S3/R2/MinIO")
         print("       koda update                 pull + install the latest release")
         print("       koda check                  run repo linter + tests (pre-push hygiene)")
@@ -580,7 +581,72 @@ def main(argv: list[str] | None = None) -> int:
         from .schedule import main as schedule_main
         return schedule_main(argv[1:])
 
+    if argv and argv[0] == "tools":
+        return _cmd_tools(argv[1:])
+
     return asyncio.run(_repl())
+
+
+def _cmd_tools(argv: list[str]) -> int:
+    """List registered tools grouped by toolset.
+
+    Tools self-register at import time. This is the introspection surface so
+    operators can see what a session has available without starting the REPL.
+    """
+    if argv and argv[0] in {"-h", "--help"}:
+        print("usage: koda tools [--toolset NAME[,NAME...]] [--names]")
+        print()
+        print("  --toolset  restrict output to the given toolset(s)")
+        print("  --names    print bare tool names only, one per line")
+        return 0
+
+    wanted: set[str] | None = None
+    names_only = False
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--toolset" and i + 1 < len(argv):
+            wanted = {x.strip() for x in argv[i + 1].split(",") if x.strip()}
+            i += 2
+            continue
+        if a.startswith("--toolset="):
+            wanted = {x.strip() for x in a.split("=", 1)[1].split(",") if x.strip()}
+            i += 1
+            continue
+        if a == "--names":
+            names_only = True
+            i += 1
+            continue
+        print(f"unknown flag: {a}", file=sys.stderr)
+        return 2
+
+    from ..tools import builtins as _builtins  # noqa: F401 — triggers registration
+    from ..tools.registry import global_registry
+
+    groups = global_registry().toolsets()
+    if wanted is not None:
+        groups = {ts: tools for ts, tools in groups.items() if ts in wanted}
+        missing = wanted - set(groups)
+        if missing:
+            print(f"unknown toolset(s): {', '.join(sorted(missing))}", file=sys.stderr)
+            return 1
+
+    if not groups:
+        print("no tools registered.")
+        return 0
+
+    if names_only:
+        for tools in groups.values():
+            for name in tools:
+                print(name)
+        return 0
+
+    total = sum(len(tools) for tools in groups.values())
+    print(f"{total} tool(s) across {len(groups)} toolset(s):\n")
+    width = max(len(ts) for ts in groups)
+    for ts, tools in groups.items():
+        print(f"  [{ts:<{width}}]  {', '.join(tools)}")
+    return 0
 
 
 _INSTALLER_URL = "https://koda.vektraindustries.com/install"
