@@ -38,6 +38,8 @@ class ProviderEntry:
     env_keys: tuple[str, ...] = ()
     base_url: str = ""
     base_url_env: str = ""
+    recommended: bool = False  # surfaced by default in the wizard menu
+    supports_tools: bool = True  # False for adapters/providers without tool-use
 
 
 # Ordering matters: the wizard renders entries in this order, with local
@@ -51,6 +53,7 @@ PROVIDER_CATALOG: tuple[ProviderEntry, ...] = (
         hint="local models, no API key",
         tier="local",
         transport="bespoke",
+        recommended=True,
     ),
     ProviderEntry(
         id="llamacpp",
@@ -58,6 +61,7 @@ PROVIDER_CATALOG: tuple[ProviderEntry, ...] = (
         hint="local server — no API key needed",
         tier="local",
         transport="bespoke",
+        recommended=True,
     ),
     # --- Cloud: first-class (direct adapter) ---
     ProviderEntry(
@@ -67,6 +71,7 @@ PROVIDER_CATALOG: tuple[ProviderEntry, ...] = (
         tier="cloud",
         transport="direct",
         env_keys=("ANTHROPIC_API_KEY",),
+        recommended=True,
     ),
     ProviderEntry(
         id="gemini",
@@ -75,6 +80,7 @@ PROVIDER_CATALOG: tuple[ProviderEntry, ...] = (
         tier="cloud",
         transport="direct",
         env_keys=("GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENAI_API_KEY"),
+        recommended=True,
     ),
     ProviderEntry(
         id="azure_openai",
@@ -108,6 +114,7 @@ PROVIDER_CATALOG: tuple[ProviderEntry, ...] = (
         env_keys=("OPENAI_API_KEY",),
         base_url="https://api.openai.com/v1",
         base_url_env="OPENAI_BASE_URL",
+        recommended=True,
     ),
     ProviderEntry(
         id="groq",
@@ -118,6 +125,7 @@ PROVIDER_CATALOG: tuple[ProviderEntry, ...] = (
         env_keys=("GROQ_API_KEY",),
         base_url="https://api.groq.com/openai/v1",
         base_url_env="GROQ_BASE_URL",
+        recommended=True,
     ),
     ProviderEntry(
         id="cerebras",
@@ -158,6 +166,7 @@ PROVIDER_CATALOG: tuple[ProviderEntry, ...] = (
         env_keys=("OPENROUTER_API_KEY",),
         base_url="https://openrouter.ai/api/v1",
         base_url_env="OPENROUTER_BASE_URL",
+        recommended=True,
     ),
     ProviderEntry(
         id="deepseek",

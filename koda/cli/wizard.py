@@ -96,6 +96,35 @@ def _env_detector(env_keys: tuple[str, ...]) -> Callable[[], str | None]:
     return _detect
 
 
+def _option_from_entry(entry: Any) -> _ProviderOption:
+    if entry.id == "ollama":
+        return _ProviderOption(
+            value=entry.id, label=entry.label,
+            base_hint=entry.hint,
+            detector=detect_ollama_models,
+            detail_fn=lambda v: f"{len(v)} model(s) available" if v else "not reachable",
+        )
+    if entry.id == "gemini":
+        return _ProviderOption(
+            value=entry.id, label=entry.label,
+            base_hint=entry.hint,
+            detector=detect_gemini_env_key,
+            detail_fn=lambda v: "key detected" if v else "no key",
+        )
+    if entry.env_keys:
+        return _ProviderOption(
+            value=entry.id, label=entry.label,
+            base_hint=entry.hint,
+            detector=_env_detector(entry.env_keys),
+            detail_fn=lambda v: "key detected" if v else "no key",
+        )
+    return _ProviderOption(
+        value=entry.id, label=entry.label,
+        base_hint=entry.hint,
+        detector=None, detail_fn=None,
+    )
+
+
 def _build_provider_options() -> tuple[_ProviderOption, ...]:
     """Derive the wizard menu from the provider catalog.
 
@@ -105,45 +134,30 @@ def _build_provider_options() -> tuple[_ProviderOption, ...]:
     """
     from ..providers.catalog import PROVIDER_CATALOG
 
-    options: list[_ProviderOption] = []
     local: list[_ProviderOption] = []
     cloud: list[_ProviderOption] = []
     for entry in PROVIDER_CATALOG:
-        if entry.id == "ollama":
-            opt = _ProviderOption(
-                value=entry.id, label=entry.label,
-                base_hint=entry.hint,
-                detector=detect_ollama_models,
-                detail_fn=lambda v: f"{len(v)} model(s) available" if v else "not reachable",
-            )
-        elif entry.id == "gemini":
-            opt = _ProviderOption(
-                value=entry.id, label=entry.label,
-                base_hint=entry.hint,
-                detector=detect_gemini_env_key,
-                detail_fn=lambda v: "key detected" if v else "no key",
-            )
-        elif entry.env_keys:
-            opt = _ProviderOption(
-                value=entry.id, label=entry.label,
-                base_hint=entry.hint,
-                detector=_env_detector(entry.env_keys),
-                detail_fn=lambda v: "key detected" if v else "no key",
-            )
-        else:
-            opt = _ProviderOption(
-                value=entry.id, label=entry.label,
-                base_hint=entry.hint,
-                detector=None, detail_fn=None,
-            )
-        (local if entry.tier == "local" else cloud).append(opt)
+        bucket = local if entry.tier == "local" else cloud
+        bucket.append(_option_from_entry(entry))
+    return tuple(local + cloud)
 
-    options.extend(local)
-    options.extend(cloud)
-    return tuple(options)
+
+def _build_recommended_options() -> tuple[_ProviderOption, ...]:
+    """Catalog subset flagged ``recommended=True`` — powers the short picker."""
+    from ..providers.catalog import PROVIDER_CATALOG
+
+    local: list[_ProviderOption] = []
+    cloud: list[_ProviderOption] = []
+    for entry in PROVIDER_CATALOG:
+        if not entry.recommended:
+            continue
+        (local if entry.tier == "local" else cloud).append(_option_from_entry(entry))
+    return tuple(local + cloud)
 
 
 _PROVIDER_OPTIONS: tuple[_ProviderOption, ...] = _build_provider_options()
+_RECOMMENDED_OPTIONS: tuple[_ProviderOption, ...] = _build_recommended_options()
+_SHOW_ALL_SENTINEL = "__show_all_cloud__"
 
 
 _APPROVAL_OPTIONS: list[SelectOption] = [
@@ -182,18 +196,45 @@ class _WizardState:
 # ---------------------------------------------------------------------------
 
 
-def _detect_available(prompter: Prompter) -> tuple[list[SelectOption], list[bool]]:
-    prompter.section("Detecting environment")
+def _probe_options(
+    prompter: Prompter,
+    pool: tuple[_ProviderOption, ...],
+    *,
+    announce: bool,
+) -> tuple[list[SelectOption], list[bool]]:
     options: list[SelectOption] = []
     present_flags: list[bool] = []
-    for opt in _PROVIDER_OPTIONS:
+    for opt in pool:
         probe = opt.detector() if opt.detector else None
         present = bool(probe)
         detail = opt.detail_fn(probe) if opt.detail_fn else ""
-        prompter.status(present, opt.label, detail=detail or opt.base_hint)
+        if announce:
+            prompter.status(present, opt.label, detail=detail or opt.base_hint)
         hint = opt.base_hint + (f" — {detail}" if present and detail else "")
         options.append(SelectOption(value=opt.value, label=opt.label, hint=hint))
         present_flags.append(present)
+    return options, present_flags
+
+
+def _detect_available(prompter: Prompter) -> tuple[list[SelectOption], list[bool]]:
+    """Probe recommended providers for the short picker.
+
+    Only the recommended set is announced up-front — the full 22-entry
+    catalog would be noise for most users. Non-recommended providers are
+    still reachable via the "more cloud providers…" expander.
+    """
+    prompter.section("Detecting environment")
+    options, present_flags = _probe_options(
+        prompter, _RECOMMENDED_OPTIONS, announce=True,
+    )
+    options.append(
+        SelectOption(
+            value=_SHOW_ALL_SENTINEL,
+            label="more cloud providers…",
+            hint=f"{len(_PROVIDER_OPTIONS) - len(_RECOMMENDED_OPTIONS)} additional backends",
+        )
+    )
+    present_flags.append(False)
     return options, present_flags
 
 
@@ -236,6 +277,53 @@ async def _self_test(provider_id: str, provider_config: dict[str, Any]) -> tuple
         return False, f"{type(exc).__name__}: {exc}"
 
 
+async def _tool_use_probe(
+    provider_id: str, provider_config: dict[str, Any],
+) -> tuple[bool, str]:
+    """Ask the provider to call a toy tool and check whether it does.
+
+    The turn loop needs tool-calls to drive scanners — if a provider or
+    model swallows the request silently, the operator should know at
+    setup time rather than discover it mid-engagement. Returns
+    ``(ok, detail)``: ``ok=True`` only if the provider returns a
+    structured ``tool_calls`` entry (i.e. honors the tool-call contract).
+    """
+    from ..adapters.base import ToolSpec
+
+    try:
+        provider = create_provider(provider_id, provider_config)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"{type(exc).__name__}: {exc}"
+
+    spec = ToolSpec(
+        name="echo",
+        description="Return the given text. Use it to answer the user's request.",
+        input_schema={
+            "type": "object",
+            "properties": {"text": {"type": "string"}},
+            "required": ["text"],
+        },
+    )
+    messages = [
+        Message(
+            role=Role.SYSTEM,
+            content="You have an echo tool. Call it when the user asks to echo something.",
+        ),
+        Message(role=Role.USER, content="Echo the word: pong"),
+    ]
+    try:
+        resp = await provider.chat(messages, tools=[spec], tool_choice="auto")
+    except Exception as exc:  # noqa: BLE001
+        return False, f"{type(exc).__name__}: {exc}"
+
+    if resp.stop_reason == "error":
+        return False, resp.text[:120]
+    if resp.tool_calls:
+        names = ", ".join(tc.name for tc in resp.tool_calls)
+        return True, f"tool-call emitted ({names})"
+    return False, "model ignored the tool and replied in plain text"
+
+
 def _apply_secrets_to_env(secrets: dict[str, str]) -> None:
     # Adapters read keys from the process env, not the config dict. Push
     # captured secrets in before verification so the ping hits the wire
@@ -264,6 +352,21 @@ async def _verify_and_retry(
             p.stop(detail if ok else f"failed: {detail}")
 
         if ok:
+            with prompter.progress("probing tool-use support") as p:
+                tool_ok, tool_detail = await _tool_use_probe(
+                    provider_id, current.merged_config(),
+                )
+                p.stop(tool_detail)
+            if not tool_ok:
+                prompter.note(
+                    f"{tool_detail}\n\n"
+                    "K.O.D.A.'s scanner tools (nmap, trivy, semgrep, …) only\n"
+                    "run when the model emits tool-calls. You can still use\n"
+                    "this provider for chat, but expect reduced automation.\n"
+                    "Pick a different model id, or switch to Ollama / Anthropic\n"
+                    "if scanner orchestration matters.",
+                    title="Tool-use not verified",
+                )
             return current
 
         prompter.note(
@@ -546,6 +649,18 @@ def _stage_provider(
             0,
         )
         choice = prompter.select("Default provider", options, initial=initial)
+
+    if choice == _SHOW_ALL_SENTINEL:
+        # User asked to see the full catalog. Probe every remaining
+        # provider and let them pick without re-running the recommended
+        # detection noise.
+        extras = tuple(
+            opt for opt in _PROVIDER_OPTIONS
+            if opt.value not in {o.value for o in _RECOMMENDED_OPTIONS}
+        )
+        full_opts, full_flags = _probe_options(prompter, extras, announce=False)
+        initial = next((idx for idx, flag in enumerate(full_flags) if flag), 0)
+        choice = prompter.select("All cloud providers", full_opts, initial=initial)
 
     result = _run_provider_setup(prompter, choice)
 
