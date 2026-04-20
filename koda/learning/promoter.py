@@ -7,12 +7,18 @@ persistence.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
+
+from koda.learning.scoring import ScoreBreakdown, compute_score
 
 DEFAULT_MIN_CONFIDENCE = 0.7
 DEFAULT_MIN_EVIDENCE = 5
 DEFAULT_CATEGORIES = ("pattern", "procedure", "rule")
+# Composite-score floor for Phase-2 gating. Callers opt in by passing
+# min_score > 0; the default is permissive so the legacy confidence+evidence
+# gate still runs on its own.
+DEFAULT_MIN_SCORE = 0.0
 
 
 @dataclass
@@ -21,6 +27,7 @@ class PromotionCandidate:
 
     concept: Any  # koda.memory.helix.Concept
     episodes: list[Any]  # koda.memory.helix.Episode
+    score: ScoreBreakdown | None = field(default=None)
 
     @property
     def concept_id(self) -> str:
@@ -43,17 +50,20 @@ def find_candidates(
     categories: tuple[str, ...] = DEFAULT_CATEGORIES,
     limit: int = 20,
     exclude_concept_ids: set[str] | None = None,
+    min_score: float = DEFAULT_MIN_SCORE,
 ) -> list[PromotionCandidate]:
     """Scan Helix for concepts eligible for promotion.
 
-    Criteria:
+    Legacy gates:
       * confidence ≥ ``min_confidence``
       * evidence_count ≥ ``min_evidence``
       * category ∈ ``categories``
-      * concept_id ∉ ``exclude_concept_ids`` (for skipping already-pending)
+      * concept_id ∉ ``exclude_concept_ids`` (skip already-pending)
 
-    Returns up to ``limit`` candidates sorted by confidence × evidence_count
-    descending — the strongest signal first.
+    When ``min_score > 0``, the 6-signal composite score in
+    :mod:`koda.learning.scoring` runs over concept + fetched episodes; any
+    candidate below the floor is dropped and the remainder are ranked by
+    composite score instead of ``confidence × evidence_count``.
     """
     exclude = exclude_concept_ids or set()
 
@@ -69,20 +79,36 @@ def find_candidates(
                 continue
             seen[cid] = concept
 
-    ranked = sorted(
-        seen.values(),
-        key=lambda c: (
-            float(getattr(c, "confidence", 0.0))
-            * max(1, int(getattr(c, "evidence_count", 1)))
-        ),
-        reverse=True,
-    )[:limit]
+    if min_score <= 0.0:
+        ranked = sorted(
+            seen.values(),
+            key=lambda c: (
+                float(getattr(c, "confidence", 0.0))
+                * max(1, int(getattr(c, "evidence_count", 1)))
+            ),
+            reverse=True,
+        )[:limit]
+        return [
+            PromotionCandidate(
+                concept=c, episodes=_pull_evidence(helix, c), score=None,
+            )
+            for c in ranked
+        ]
 
-    candidates: list[PromotionCandidate] = []
-    for concept in ranked:
+    # Score-gated path. Fetch episodes once per surviving concept to build
+    # the scorer's inputs; drop anything below ``min_score``.
+    scored: list[tuple[float, Any, list[Any], ScoreBreakdown]] = []
+    for concept in seen.values():
         episodes = _pull_evidence(helix, concept)
-        candidates.append(PromotionCandidate(concept=concept, episodes=episodes))
-    return candidates
+        breakdown = compute_score(concept=concept, episodes=episodes)
+        if breakdown.total < min_score:
+            continue
+        scored.append((breakdown.total, concept, episodes, breakdown))
+    scored.sort(key=lambda row: row[0], reverse=True)
+    return [
+        PromotionCandidate(concept=c, episodes=eps, score=bd)
+        for _total, c, eps, bd in scored[:limit]
+    ]
 
 
 def _pull_evidence(helix: Any, concept: Any) -> list[Any]:
