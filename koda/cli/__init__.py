@@ -501,6 +501,7 @@ def main(argv: list[str] | None = None) -> int:
         print("       koda scan remote <target>   scan a remote host over SSH (ControlMaster)")
         print("       koda schedule add|list|run  scheduled monitoring + diff alerts")
         print("       koda tools [--toolset x]    list registered tools by toolset")
+        print("       koda plugins                list user plugins in $KODA_HOME/plugins/")
         print("       koda remote push|pull|list  sync evidence bundles to/from S3/R2/MinIO")
         print("       koda update                 pull + install the latest release")
         print("       koda check                  run repo linter + tests (pre-push hygiene)")
@@ -584,7 +585,62 @@ def main(argv: list[str] | None = None) -> int:
     if argv and argv[0] == "tools":
         return _cmd_tools(argv[1:])
 
+    if argv and argv[0] == "plugins":
+        return _cmd_plugins(argv[1:])
+
     return asyncio.run(_repl())
+
+
+def _cmd_plugins(argv: list[str]) -> int:
+    """List user plugins discovered under ``$KODA_HOME/plugins/``.
+
+    User plugins are plain ``.py`` files (or packages) that self-register tools
+    at import time. Drop one in and it shows up at next invocation — no edits
+    to the KODA source required.
+    """
+    if argv and argv[0] in {"-h", "--help"}:
+        print("usage: koda plugins")
+        print()
+        print("  Lists .py files and packages found under $KODA_HOME/plugins/")
+        print("  and the tools each registered at load time.")
+        return 0
+
+    from ..config import KODA_HOME
+    from ..tools import builtins as _builtins  # noqa: F401 — triggers registration
+    from ..tools.registry import global_registry
+
+    plugin_dir = KODA_HOME / "plugins"
+    print(f"plugin dir: {plugin_dir}")
+    if not plugin_dir.is_dir():
+        print("  (directory does not exist — create it and drop .py files in)")
+        return 0
+
+    loaded = list(_builtins._LOADED_PLUGINS)
+    if not loaded:
+        print("  (no plugins found)")
+        return 0
+
+    # Every tool whose handler lives under koda_user_plugins.* came from a
+    # plugin — group by plugin stem so we can show who registered what.
+    registry = global_registry()
+    plugin_tools: dict[str, list[str]] = {stem: [] for stem in loaded}
+    for tool_name in registry.names():
+        tool = registry.get(tool_name)
+        if tool is None:
+            continue
+        mod_name = getattr(tool.handler, "__module__", "")
+        if not mod_name.startswith("koda_user_plugins."):
+            continue
+        stem = mod_name.split(".", 2)[1]
+        plugin_tools.setdefault(stem, []).append(tool_name)
+
+    print(f"{len(loaded)} plugin(s):\n")
+    width = max(len(s) for s in loaded)
+    for stem in loaded:
+        tools = sorted(plugin_tools.get(stem, []))
+        shown = ", ".join(tools) if tools else "(no tools registered)"
+        print(f"  {stem:<{width}}  {shown}")
+    return 0
 
 
 def _cmd_tools(argv: list[str]) -> int:
