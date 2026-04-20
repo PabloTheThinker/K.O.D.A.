@@ -703,7 +703,7 @@ def _detect_install_dir() -> str | None:
     return None
 
 
-def _git(source_dir, *args: str, check: bool = True) -> "subprocess.CompletedProcess[str]":  # type: ignore[name-defined]
+def _git(source_dir, *args: str, check: bool = True):
     import subprocess
     return subprocess.run(
         ["git", "-C", str(source_dir), *args],
@@ -750,8 +750,6 @@ def _update_via_git(
         print("  stash or commit first, or re-run with --force.", file=sys.stderr)
         return 1
 
-    # Ensure target branch exists locally or on remote.
-    current_branch = _git(source_dir, "rev-parse", "--abbrev-ref", "HEAD", check=False).stdout.strip()
     current_sha = _git(source_dir, "rev-parse", "HEAD", check=False).stdout.strip()
     current_version = _read_version(install_dir / ".source" / "koda" / "__init__.py")
 
@@ -774,7 +772,8 @@ def _update_via_git(
     behind = int(ahead_behind[1]) if len(ahead_behind) == 2 else 0
 
     # ── Summary ───────────────────────────────────────────────────
-    short = lambda s: s[:7] if s else "—"
+    def short(s: str) -> str:
+        return s[:7] if s else "—"
     print()
     print(f"  {DIM}current:{RESET}  {BOLD}v{current_version or '?'}{RESET}  ({short(current_sha)})")
 
@@ -850,7 +849,7 @@ def _update_via_git(
             return 0
 
     # ── Pull ──────────────────────────────────────────────────────
-    print(f"\n→ pulling…")
+    print("\n→ pulling…")
     pull_args = ["pull", "--ff-only", "origin", branch]
     if force and ahead > 0 and behind > 0:
         pull_args = ["pull", "--rebase", "origin", branch]
@@ -861,7 +860,7 @@ def _update_via_git(
 
     # ── Reinstall deps only if pyproject.toml changed ─────────────
     if deps_changed:
-        print(f"→ reinstalling dependencies (pyproject.toml changed)…")
+        print("→ reinstalling dependencies (pyproject.toml changed)…")
         venv_python = install_dir / ".venv" / "bin" / "python"
         if not venv_python.exists():
             print(f"  {YELLOW}warn: {venv_python} not found — skipping reinstall{RESET}",
