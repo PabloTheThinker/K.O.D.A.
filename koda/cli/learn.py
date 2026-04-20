@@ -21,8 +21,6 @@ from koda.learning import (
     scan_skill_draft,
 )
 from koda.learning.schedule import (
-    DEFAULT_CRON_EXPR,
-    DEFAULT_REPORT_CRON_EXPR,
     get_learn_schedule,
     get_report_schedule,
     install_learn_schedule,
@@ -73,9 +71,8 @@ def _print_help() -> None:
     print("       koda learn approve <name>")
     print("       koda learn reject  <name>")
     print("       koda learn status")
-    print("       koda learn schedule [install|remove|status] [cron_expr]")
-    print("       koda learn schedule report [install|remove|status] [cron_expr]")
-    print("       koda learn report [--since DUR] [--stdout]")
+    print("       koda learn schedule [<time>|off]")
+    print("       koda learn report   [<time>|off|status|--since DUR|--stdout]")
     print()
     print("  run              (default) consolidate Helix, scan for candidates,")
     print("                   write drafts to _pending/")
@@ -84,8 +81,10 @@ def _print_help() -> None:
     print("  approve <name>   move _pending/<name> into _learned/<name>")
     print("  reject  <name>   archive draft under _rejected/")
     print("  status           show pipeline counts")
-    print("  schedule         install or remove nightly `koda learn run` cron")
-    print("  report           write LEARNED-<date>.md digest under _reports/")
+    print("  schedule <time>  install nightly `koda learn run`; bare = status, `off` = remove")
+    print("  report           bare = digest now; <time> = schedule it daily; `off` = remove")
+    print()
+    print("  <time> accepts: 8am, 2:30pm, 14:00, or a raw 5-field cron expression.")
 
 
 def _cmd_run(argv: list[str]) -> int:
@@ -351,100 +350,93 @@ def _make_synthesizer(provider_name: str | None, model: str | None):
 
 
 def _cmd_schedule(argv: list[str]) -> int:
-    # `schedule report ...` routes to the digest-schedule manager.
-    if argv and argv[0] == "report":
-        return _cmd_schedule_report(argv[1:])
-
-    if not argv or argv[0] in {"-h", "--help", "status"}:
-        entry = get_learn_schedule()
-        if entry is None:
-            print(f"{_DIM}no nightly learn schedule installed{_RESET}")
-            print(f"  install: {_DIM}koda learn schedule install{_RESET}")
-            return 0
-        print(f"{_GREEN}✓ installed{_RESET}")
-        print(f"  cron:    {entry.cron_expr}")
-        print(f"  command: {entry.command}")
+    """Manage the nightly `koda learn run` cron. ``argv`` is a natural time
+    spec ("8am", "14:30", raw cron), "off", "status", or empty."""
+    if argv and argv[0] in {"-h", "--help"}:
+        print("usage: koda learn schedule [<time>|off|status]")
+        print()
+        print("  <time>   e.g. 8am, 2:30pm, 14:00, or `0 8 * * *`")
+        print("  off      remove the cron entry")
+        print("  (bare)   show current schedule")
         return 0
 
-    action = argv[0]
-    if action == "install":
-        cron_expr = argv[1] if len(argv) > 1 else DEFAULT_CRON_EXPR
-        try:
-            entry = install_learn_schedule(cron_expr=cron_expr)
-        except Exception as exc:
-            print(f"error: could not install cron entry: {exc}", file=sys.stderr)
-            return 1
-        print(f"{_GREEN}✓ installed{_RESET} {entry.cron_expr}  {_DIM}{entry.command}{_RESET}")
-        return 0
+    if not argv or argv[0] == "status":
+        return _print_schedule_status(
+            entry=get_learn_schedule(),
+            label="nightly learn",
+            install_hint="koda learn schedule 2am",
+        )
 
-    if action == "remove":
-        try:
-            removed = remove_learn_schedule()
-        except Exception as exc:
-            print(f"error: could not remove cron entry: {exc}", file=sys.stderr)
-            return 1
-        if removed:
-            print(f"{_GREEN}✓ removed{_RESET}")
-        else:
-            print(f"{_DIM}nothing to remove{_RESET}")
-        return 0
+    first = argv[0].lower()
+    if first in {"off", "remove", "none"}:
+        return _remove_cron(remove_learn_schedule)
 
-    print(f"error: unknown schedule action {action!r}", file=sys.stderr)
-    print("usage: koda learn schedule [install [cron_expr] | remove | status]", file=sys.stderr)
-    return 2
-
-
-def _cmd_schedule_report(argv: list[str]) -> int:
-    if not argv or argv[0] in {"-h", "--help", "status"}:
-        entry = get_report_schedule()
-        if entry is None:
-            print(f"{_DIM}no learn-report schedule installed{_RESET}")
-            print(f"  install: {_DIM}koda learn schedule report install [cron_expr]{_RESET}")
-            return 0
-        print(f"{_GREEN}✓ installed{_RESET}")
-        print(f"  cron:    {entry.cron_expr}")
-        print(f"  command: {entry.command}")
-        return 0
-
-    action = argv[0]
-    if action == "install":
-        cron_expr = argv[1] if len(argv) > 1 else DEFAULT_REPORT_CRON_EXPR
-        try:
-            entry = install_report_schedule(cron_expr=cron_expr)
-        except Exception as exc:
-            print(f"error: could not install cron entry: {exc}", file=sys.stderr)
-            return 1
-        print(f"{_GREEN}✓ installed{_RESET} {entry.cron_expr}  {_DIM}{entry.command}{_RESET}")
-        return 0
-
-    if action == "remove":
-        try:
-            removed = remove_report_schedule()
-        except Exception as exc:
-            print(f"error: could not remove cron entry: {exc}", file=sys.stderr)
-            return 1
-        if removed:
-            print(f"{_GREEN}✓ removed{_RESET}")
-        else:
-            print(f"{_DIM}nothing to remove{_RESET}")
-        return 0
-
-    print(f"error: unknown schedule report action {action!r}", file=sys.stderr)
-    print(
-        "usage: koda learn schedule report [install [cron_expr] | remove | status]",
-        file=sys.stderr,
-    )
-    return 2
+    cron_expr = _parse_time_to_cron(" ".join(argv))
+    if cron_expr is None:
+        print(
+            f"error: could not parse time {' '.join(argv)!r}. "
+            "Try 8am, 2:30pm, 14:00, or a 5-field cron expression.",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        entry = install_learn_schedule(cron_expr=cron_expr)
+    except Exception as exc:
+        print(f"error: could not install cron entry: {exc}", file=sys.stderr)
+        return 1
+    print(f"{_GREEN}✓ scheduled{_RESET} {entry.cron_expr}  {_DIM}{entry.command}{_RESET}")
+    return 0
 
 
 def _cmd_report(argv: list[str]) -> int:
+    """Either generate a digest now or manage the digest schedule.
+
+    Shape:
+      koda learn report                   generate digest, write to disk
+      koda learn report --since 7d        generate with custom window
+      koda learn report --stdout          print instead of writing
+      koda learn report <time>            schedule daily digest at <time>
+      koda learn report off               remove schedule
+      koda learn report status            show schedule
+    """
     if argv and argv[0] in {"-h", "--help"}:
-        print("usage: koda learn report [--since DUR] [--stdout]")
+        print("usage: koda learn report                        (generate digest now)")
+        print("       koda learn report [--since DUR] [--stdout]")
+        print("       koda learn report <time>                 (schedule daily)")
+        print("       koda learn report off|status")
         print()
-        print("  DUR accepts suffixes: 30m, 24h, 7d (default: 24h).")
-        print("  Pass --since none or --since all for a lifetime snapshot.")
+        print("  <time>   e.g. 8am, 2:30pm, 14:00, or `0 8 * * *`")
+        print("  DUR      30m / 24h / 7d (default 24h); `all` for lifetime")
         return 0
 
+    # Schedule-management branches.
+    if argv and argv[0].lower() == "status":
+        return _print_schedule_status(
+            entry=get_report_schedule(),
+            label="daily digest",
+            install_hint="koda learn report 8am",
+        )
+    if argv and argv[0].lower() in {"off", "remove", "none"}:
+        return _remove_cron(remove_report_schedule)
+
+    # If the first token parses cleanly as a time, treat the whole argv as
+    # "schedule" rather than "generate now". Flags are never time specs,
+    # so `--since`/`--stdout` can't collide here.
+    if argv and not argv[0].startswith("-"):
+        cron_expr = _parse_time_to_cron(" ".join(argv))
+        if cron_expr is not None:
+            try:
+                entry = install_report_schedule(cron_expr=cron_expr)
+            except Exception as exc:
+                print(f"error: could not install cron entry: {exc}", file=sys.stderr)
+                return 1
+            print(
+                f"{_GREEN}✓ scheduled{_RESET} {entry.cron_expr}  "
+                f"{_DIM}{entry.command}{_RESET}"
+            )
+            return 0
+
+    # ── Generate-now path ────────────────────────────────────────────
     since_raw = "24h"
     to_stdout = False
     i = 0
@@ -466,8 +458,9 @@ def _cmd_report(argv: list[str]) -> int:
     report = generate_report(since=since)
 
     if to_stdout:
-        sys.stdout.write(report.render_markdown())
-        if not report.render_markdown().endswith("\n"):
+        md = report.render_markdown()
+        sys.stdout.write(md)
+        if not md.endswith("\n"):
             sys.stdout.write("\n")
         return 0
 
@@ -480,6 +473,90 @@ def _cmd_report(argv: list[str]) -> int:
         f"rejected={len(report.rejected)}{_RESET}"
     )
     return 0
+
+
+def _print_schedule_status(*, entry, label: str, install_hint: str) -> int:
+    if entry is None:
+        print(f"{_DIM}no {label} schedule installed{_RESET}")
+        print(f"  install: {_DIM}{install_hint}{_RESET}")
+        return 0
+    print(f"{_GREEN}✓ installed{_RESET}  {_BOLD}{entry.cron_expr}{_RESET}")
+    print(f"  command: {_DIM}{entry.command}{_RESET}")
+    return 0
+
+
+def _remove_cron(remover) -> int:
+    try:
+        removed = remover()
+    except Exception as exc:
+        print(f"error: could not remove cron entry: {exc}", file=sys.stderr)
+        return 1
+    if removed:
+        print(f"{_GREEN}✓ removed{_RESET}")
+    else:
+        print(f"{_DIM}nothing to remove{_RESET}")
+    return 0
+
+
+def _parse_time_to_cron(text: str) -> str | None:
+    """Parse a human time into a 5-field cron expression.
+
+    Accepts: ``8am``, ``2:30pm``, ``14:00``, ``0 8 * * *``. Returns ``None``
+    if nothing matches so the caller can error gracefully.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return None
+
+    # Raw 5-field cron — e.g. "*/15 * * * *" or "0 8 * * 1-5". Pass through
+    # without validation; crontab will reject anything malformed.
+    parts = stripped.split()
+    if len(parts) == 5 and any(c in stripped for c in "*,-/"):
+        return stripped
+    if len(parts) == 5 and all(
+        _looks_like_cron_field(p) for p in parts
+    ):
+        return stripped
+
+    raw = stripped.lower().replace(" ", "")
+
+    suffix: str | None = None
+    if raw.endswith("am"):
+        suffix, raw = "am", raw[:-2]
+    elif raw.endswith("pm"):
+        suffix, raw = "pm", raw[:-2]
+
+    if ":" in raw:
+        hh_str, _, mm_str = raw.partition(":")
+    else:
+        hh_str, mm_str = raw, "0"
+
+    if not (hh_str.isdigit() and mm_str.isdigit()):
+        return None
+    hour = int(hh_str)
+    minute = int(mm_str)
+
+    if suffix == "am":
+        if not 1 <= hour <= 12:
+            return None
+        if hour == 12:
+            hour = 0
+    elif suffix == "pm":
+        if not 1 <= hour <= 12:
+            return None
+        if hour < 12:
+            hour += 12
+
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+
+    return f"{minute} {hour} * * *"
+
+
+def _looks_like_cron_field(field: str) -> bool:
+    # Very loose — anything made of digits / commas / dashes / slashes /
+    # asterisks / L / W / # counts as a cron field for passthrough.
+    return bool(field) and all(c.isdigit() or c in "*,-/LW#" for c in field)
 
 
 def _parse_since(raw: str):
