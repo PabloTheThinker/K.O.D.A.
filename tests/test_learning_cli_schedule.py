@@ -140,11 +140,13 @@ def test_report_bare_generates_digest(
 
     store = store_mod.LearnedSkillStore(tmp_path / "_learned")
     monkeypatch.setattr(report_mod, "default_store", lambda: store)
+    monkeypatch.setattr(store_mod, "default_store", lambda: store)
 
     rc = cli._cmd_report([])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "digest written" in out
+    assert "digest delivered" in out
+    assert (tmp_path / "_learned" / "_reports").is_dir()
 
 
 def test_report_stdout_still_works(
@@ -171,3 +173,93 @@ def test_report_and_schedule_coexist_via_time_args(fake_cron: _FakeCrontab) -> N
     assert any(
         "# koda-learn" in ln and "# koda-learn-report" not in ln for ln in lines
     )
+
+
+# ── flag wiring: --format and --deliver ────────────────────────────
+
+
+def test_report_schedule_bakes_format_and_deliver(fake_cron: _FakeCrontab) -> None:
+    rc = cli._cmd_report(["8am", "--format", "pdf", "--deliver", "telegram"])
+    assert rc == 0
+    line = next(
+        ln for ln in fake_cron.content.splitlines() if "# koda-learn-report" in ln
+    )
+    assert "--format pdf" in line
+    assert "--deliver telegram" in line
+    assert "--since 24h" in line
+
+
+def test_report_schedule_bakes_custom_since(fake_cron: _FakeCrontab) -> None:
+    rc = cli._cmd_report(["8am", "--since", "7d"])
+    assert rc == 0
+    line = next(
+        ln for ln in fake_cron.content.splitlines() if "# koda-learn-report" in ln
+    )
+    assert "--since 7d" in line
+
+
+def test_report_split_flags_before_time(fake_cron: _FakeCrontab) -> None:
+    # Flags first, time last — the splitter should still find it.
+    rc = cli._cmd_report(["--format", "pdf", "8am"])
+    assert rc == 0
+    assert "# koda-learn-report" in fake_cron.content
+    assert "--format pdf" in fake_cron.content
+
+
+def test_report_rejects_unknown_flag(
+    fake_cron: _FakeCrontab, capsys: pytest.CaptureFixture[str],
+) -> None:
+    rc = cli._cmd_report(["--garbage"])
+    assert rc == 2
+    assert "unknown flag" in capsys.readouterr().err
+
+
+def test_report_rejects_unknown_format(
+    fake_cron: _FakeCrontab, tmp_path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from koda.learning import report as report_mod
+    from koda.learning import store as store_mod
+
+    store = store_mod.LearnedSkillStore(tmp_path / "_learned")
+    monkeypatch.setattr(report_mod, "default_store", lambda: store)
+    monkeypatch.setattr(store_mod, "default_store", lambda: store)
+
+    rc = cli._cmd_report(["--format", "docx"])
+    assert rc == 2
+    assert "unknown --format" in capsys.readouterr().err
+
+
+def test_report_deliver_stdout_via_flag(
+    fake_cron: _FakeCrontab, tmp_path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from koda.learning import report as report_mod
+    from koda.learning import store as store_mod
+
+    store = store_mod.LearnedSkillStore(tmp_path / "_learned")
+    monkeypatch.setattr(report_mod, "default_store", lambda: store)
+    monkeypatch.setattr(store_mod, "default_store", lambda: store)
+
+    rc = cli._cmd_report(["--deliver", "stdout"])
+    assert rc == 0
+    assert "KODA learning digest" in capsys.readouterr().out
+
+
+def test_report_env_defaults_pick_up(
+    fake_cron: _FakeCrontab, tmp_path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from koda.learning import report as report_mod
+    from koda.learning import store as store_mod
+
+    store = store_mod.LearnedSkillStore(tmp_path / "_learned")
+    monkeypatch.setattr(report_mod, "default_store", lambda: store)
+    monkeypatch.setattr(store_mod, "default_store", lambda: store)
+    monkeypatch.setenv("KODA_REPORT_DELIVER", "stdout")
+    monkeypatch.setenv("KODA_REPORT_FORMAT", "md")
+
+    rc = cli._cmd_report([])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "KODA learning digest" in out

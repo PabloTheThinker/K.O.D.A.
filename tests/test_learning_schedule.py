@@ -143,3 +143,19 @@ def test_report_install_is_idempotent(fake_cron: _FakeCrontab) -> None:
 
 def test_get_report_returns_none_when_absent(fake_cron: _FakeCrontab) -> None:
     assert sched.get_report_schedule() is None
+
+
+def test_report_install_bakes_since(fake_cron: _FakeCrontab) -> None:
+    entry = sched.install_report_schedule(since="7d")
+    assert "--since 7d" in entry.command
+    assert "--format" not in entry.command
+    assert "--deliver" not in entry.command
+
+
+def test_report_install_bakes_fmt_and_deliver(fake_cron: _FakeCrontab) -> None:
+    entry = sched.install_report_schedule(
+        cron_expr="0 8 * * *", since="24h", fmt="pdf", deliver="telegram",
+    )
+    assert "--since 24h" in entry.command
+    assert "--format pdf" in entry.command
+    assert "--deliver telegram" in entry.command

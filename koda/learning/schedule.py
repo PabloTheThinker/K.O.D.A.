@@ -75,18 +75,28 @@ def get_learn_schedule() -> LearnScheduleEntry | None:
 def install_report_schedule(
     cron_expr: str = DEFAULT_REPORT_CRON_EXPR,
     *,
-    extra_flags: str = "report --since 24h",
+    since: str = "24h",
+    fmt: str | None = None,
+    deliver: str | None = None,
 ) -> LearnScheduleEntry:
     """Add (or replace) the digest-report cron entry.
 
     Default schedule is 8 AM daily — pick an hour when the user is awake
     to read the digest. Idempotent by the ``# koda-learn-report`` marker.
+    ``fmt`` and ``deliver`` are baked into the cron line so the scheduled
+    invocation reproduces the user's choice (``--format pdf --deliver
+    telegram``).
     """
     existing = _read_crontab()
     lines = [ln for ln in existing.splitlines() if not _REPORT_MARKER_RE.search(ln)]
 
     koda_bin = shutil.which("koda") or "koda"
-    command = f"{koda_bin} learn {extra_flags}".strip()
+    flags = [f"--since {since}"]
+    if fmt:
+        flags.append(f"--format {fmt}")
+    if deliver:
+        flags.append(f"--deliver {deliver}")
+    command = f"{koda_bin} learn report {' '.join(flags)}".strip()
     line = f"{cron_expr} {command}  {_REPORT_MARKER}"
     lines.append(line)
     _write_crontab("\n".join(lines) + "\n")

@@ -389,44 +389,49 @@ def _cmd_schedule(argv: list[str]) -> int:
 
 
 def _cmd_report(argv: list[str]) -> int:
-    """Either generate a digest now or manage the digest schedule.
+    """Generate a digest now, or manage the digest schedule.
 
     Shape:
-      koda learn report                   generate digest, write to disk
-      koda learn report --since 7d        generate with custom window
-      koda learn report --stdout          print instead of writing
-      koda learn report <time>            schedule daily digest at <time>
-      koda learn report off               remove schedule
-      koda learn report status            show schedule
+      koda learn report                                 generate digest, write to disk
+      koda learn report --since 7d                      custom window
+      koda learn report --format pdf                    render as PDF
+      koda learn report --deliver telegram              send via Telegram (env-configured)
+      koda learn report --stdout                        print to stdout (md only)
+      koda learn report <time> [--format F] [--deliver D]   schedule + bake flags
+      koda learn report off                             remove schedule
+      koda learn report status                          show schedule
     """
     if argv and argv[0] in {"-h", "--help"}:
-        print("usage: koda learn report                        (generate digest now)")
-        print("       koda learn report [--since DUR] [--stdout]")
-        print("       koda learn report <time>                 (schedule daily)")
-        print("       koda learn report off|status")
-        print()
-        print("  <time>   e.g. 8am, 2:30pm, 14:00, or `0 8 * * *`")
-        print("  DUR      30m / 24h / 7d (default 24h); `all` for lifetime")
+        _print_report_help()
         return 0
 
-    # Schedule-management branches.
-    if argv and argv[0].lower() == "status":
-        return _print_schedule_status(
-            entry=get_report_schedule(),
-            label="daily digest",
-            install_hint="koda learn report 8am",
-        )
-    if argv and argv[0].lower() in {"off", "remove", "none"}:
-        return _remove_cron(remove_report_schedule)
+    # ── Separate positional arg (time / off / status) from flags ────
+    time_tokens, flags = _split_positional_and_flags(argv)
 
-    # If the first token parses cleanly as a time, treat the whole argv as
-    # "schedule" rather than "generate now". Flags are never time specs,
-    # so `--since`/`--stdout` can't collide here.
-    if argv and not argv[0].startswith("-"):
-        cron_expr = _parse_time_to_cron(" ".join(argv))
+    # Schedule-management branches react to the first positional only.
+    if time_tokens:
+        first = time_tokens[0].lower()
+        if first == "status":
+            return _print_schedule_status(
+                entry=get_report_schedule(),
+                label="daily digest",
+                install_hint="koda learn report 8am",
+            )
+        if first in {"off", "remove", "none"}:
+            return _remove_cron(remove_report_schedule)
+
+        cron_expr = _parse_time_to_cron(" ".join(time_tokens))
         if cron_expr is not None:
+            parsed = _parse_report_flags(flags, default_since=None)
+            if parsed is None:
+                return 2
             try:
-                entry = install_report_schedule(cron_expr=cron_expr)
+                entry = install_report_schedule(
+                    cron_expr=cron_expr,
+                    since=parsed["since"] or "24h",
+                    fmt=parsed["fmt"],
+                    deliver=parsed["deliver"],
+                )
             except Exception as exc:
                 print(f"error: could not install cron entry: {exc}", file=sys.stderr)
                 return 1
@@ -436,43 +441,155 @@ def _cmd_report(argv: list[str]) -> int:
             )
             return 0
 
+        print(
+            f"error: could not parse {' '.join(time_tokens)!r} as a time. "
+            "Try 8am, 2:30pm, 14:00, or a 5-field cron expression.",
+            file=sys.stderr,
+        )
+        return 2
+
     # ── Generate-now path ────────────────────────────────────────────
-    since_raw = "24h"
-    to_stdout = False
-    i = 0
-    while i < len(argv):
-        arg = argv[i]
-        if arg == "--since" and i + 1 < len(argv):
-            since_raw = argv[i + 1]
-            i += 1
-        elif arg == "--stdout":
-            to_stdout = True
-        else:
-            print(f"error: unknown flag {arg!r}", file=sys.stderr)
-            return 2
-        i += 1
+    parsed = _parse_report_flags(flags, default_since="24h")
+    if parsed is None:
+        return 2
 
-    from koda.learning.report import generate_report, write_report
+    from koda.learning.report import generate_report
+    from koda.learning.report_delivery import (
+        DeliveryError,
+        create_delivery,
+        default_delivery_name,
+        default_format_name,
+    )
 
-    since = _parse_since(since_raw)
+    fmt = (parsed["fmt"] or default_format_name()).lower()
+    if parsed["to_stdout"]:
+        deliver_name = "stdout"
+    else:
+        deliver_name = (parsed["deliver"] or default_delivery_name()).lower()
+
+    if fmt not in {"md", "pdf"}:
+        print(f"error: unknown --format {fmt!r} (try md|pdf)", file=sys.stderr)
+        return 2
+
+    since = _parse_since(parsed["since"] or "24h")
     report = generate_report(since=since)
+    payload, filename = _render_payload(report, fmt)
+    if payload is None:
+        return 1  # error already printed
 
-    if to_stdout:
-        md = report.render_markdown()
-        sys.stdout.write(md)
-        if not md.endswith("\n"):
-            sys.stdout.write("\n")
-        return 0
+    try:
+        delivery = create_delivery(deliver_name)
+        result = delivery.send(
+            report=report, payload=payload, filename=filename, fmt=fmt,
+        )
+    except DeliveryError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
-    dest = write_report(report)
     window = "lifetime" if since is None else f"since {since.isoformat()}"
+    if deliver_name == "stdout":
+        return 0  # payload already flushed
     print(
-        f"{_GREEN}✓ digest written{_RESET} {dest}  "
-        f"{_DIM}({window}): "
+        f"{_GREEN}✓ digest delivered{_RESET} "
+        f"{_BOLD}{result.backend}{_RESET} → {_DIM}{result.detail}{_RESET}  "
+        f"{_DIM}({window}, {fmt}): "
         f"pending={len(report.pending)} approved={len(report.approved)} "
         f"rejected={len(report.rejected)}{_RESET}"
     )
     return 0
+
+
+def _print_report_help() -> None:
+    print("usage: koda learn report                        (generate digest now)")
+    print("       koda learn report [--since DUR] [--format md|pdf]")
+    print("                         [--deliver file|stdout|telegram|webhook] [--stdout]")
+    print("       koda learn report <time> [--format F] [--deliver D]   (schedule)")
+    print("       koda learn report off|status")
+    print()
+    print("  <time>     e.g. 8am, 2:30pm, 14:00, or `0 8 * * *`")
+    print("  DUR        30m / 24h / 7d (default 24h); `all` for lifetime")
+    print("  --format   md (default) or pdf — pdf requires koda-security[pdf]")
+    print("  --deliver  file (default) | stdout | telegram | webhook")
+    print()
+    print("  env: KODA_REPORT_FORMAT, KODA_REPORT_DELIVER set defaults.")
+    print("       Telegram: KODA_TELEGRAM_BOT_TOKEN + KODA_TELEGRAM_CHAT_ID.")
+    print("       Webhook:  KODA_REPORT_WEBHOOK_URL.")
+
+
+def _split_positional_and_flags(
+    argv: list[str],
+) -> tuple[list[str], list[str]]:
+    """Split argv into (positional tokens, flag tokens).
+
+    Flags are anything starting with ``-``; a value that immediately follows
+    a recognised flag is consumed with it so ``14:30`` after ``--since 14h``
+    isn't misread as a positional time spec.
+    """
+    value_flags = {"--since", "--format", "--deliver"}
+    positional: list[str] = []
+    flags: list[str] = []
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg.startswith("-"):
+            flags.append(arg)
+            if arg in value_flags and i + 1 < len(argv):
+                flags.append(argv[i + 1])
+                i += 2
+                continue
+        else:
+            positional.append(arg)
+        i += 1
+    return positional, flags
+
+
+def _parse_report_flags(
+    flags: list[str], *, default_since: str | None,
+) -> dict | None:
+    """Parse ``--since/--format/--deliver/--stdout``. Returns ``None`` on error."""
+    since = default_since
+    fmt: str | None = None
+    deliver: str | None = None
+    to_stdout = False
+    i = 0
+    while i < len(flags):
+        arg = flags[i]
+        if arg == "--since" and i + 1 < len(flags):
+            since = flags[i + 1]; i += 2; continue
+        if arg == "--format" and i + 1 < len(flags):
+            fmt = flags[i + 1]; i += 2; continue
+        if arg == "--deliver" and i + 1 < len(flags):
+            deliver = flags[i + 1]; i += 2; continue
+        if arg == "--stdout":
+            to_stdout = True; i += 1; continue
+        print(f"error: unknown flag {arg!r}", file=sys.stderr)
+        return None
+    return {"since": since, "fmt": fmt, "deliver": deliver, "to_stdout": to_stdout}
+
+
+def _render_payload(report, fmt: str) -> tuple[bytes | None, str]:
+    """Render the report into bytes for the requested format."""
+    stamp = report.generated_at.strftime("%Y-%m-%d")
+    if fmt == "md":
+        return report.render_markdown().encode("utf-8"), f"LEARNED-{stamp}.md"
+    if fmt == "pdf":
+        try:
+            from koda.learning.report_pdf import PDFUnavailable, render_pdf
+            return render_pdf(report), f"LEARNED-{stamp}.pdf"
+        except ImportError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return None, ""
+        except Exception as exc:  # covers PDFUnavailable + reportlab errors
+            # PDFUnavailable is a RuntimeError — catch the chain broadly so the
+            # CLI always prints a clean hint rather than a traceback.
+            from koda.learning.report_pdf import PDFUnavailable
+            if isinstance(exc, PDFUnavailable):
+                print(f"error: {exc}", file=sys.stderr)
+            else:
+                print(f"error: pdf render failed: {exc}", file=sys.stderr)
+            return None, ""
+    print(f"error: unknown format {fmt!r}", file=sys.stderr)
+    return None, ""
 
 
 def _print_schedule_status(*, entry, label: str, install_hint: str) -> int:

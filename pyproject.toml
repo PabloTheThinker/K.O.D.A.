@@ -41,6 +41,9 @@ dev = [
 mcp = [
     "mcp>=1.0",
 ]
+pdf = [
+    "reportlab>=4.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/PabloTheThinker/K.O.D.A."
