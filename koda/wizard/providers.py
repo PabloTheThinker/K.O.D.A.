@@ -465,6 +465,101 @@ _OPENAI_SPECS: dict[str, _OpenAICompatSpec] = {
         ),
         detector=detect_mistral_env_key,
     ),
+    "cerebras": _OpenAICompatSpec(
+        provider_id="cerebras",
+        label="Cerebras",
+        env_key="CEREBRAS_API_KEY",
+        key_hint_prefix="csk-",
+        min_key_len=20,
+        default_models=(
+            ("llama-3.3-70b", "Llama 3.3 70B"),
+            ("llama3.1-8b", "Llama 3.1 8B — fast"),
+            ("qwen-3-32b", "Qwen 3 32B"),
+        ),
+    ),
+    "fireworks": _OpenAICompatSpec(
+        provider_id="fireworks",
+        label="Fireworks",
+        env_key="FIREWORKS_API_KEY",
+        key_hint_prefix="fw_",
+        min_key_len=20,
+        default_models=(
+            ("accounts/fireworks/models/llama-v3p3-70b-instruct", "Llama 3.3 70B"),
+            ("accounts/fireworks/models/deepseek-v3", "DeepSeek V3"),
+            ("accounts/fireworks/models/qwen2p5-coder-32b-instruct", "Qwen 2.5 Coder 32B"),
+        ),
+    ),
+    "perplexity": _OpenAICompatSpec(
+        provider_id="perplexity",
+        label="Perplexity",
+        env_key="PERPLEXITY_API_KEY",
+        key_hint_prefix="pplx-",
+        min_key_len=20,
+        default_models=(
+            ("sonar-pro", "search-grounded, large"),
+            ("sonar", "search-grounded, fast"),
+            ("sonar-reasoning-pro", "reasoning + search"),
+        ),
+    ),
+    "huggingface": _OpenAICompatSpec(
+        provider_id="huggingface",
+        label="Hugging Face",
+        env_key="HF_TOKEN",
+        key_hint_prefix="hf_",
+        min_key_len=20,
+        default_models=(
+            ("meta-llama/Llama-3.3-70B-Instruct", "Llama 3.3 70B"),
+            ("Qwen/Qwen2.5-Coder-32B-Instruct", "Qwen 2.5 Coder 32B"),
+            ("mistralai/Mistral-Large-Instruct-2411", "Mistral Large"),
+        ),
+    ),
+    "nvidia": _OpenAICompatSpec(
+        provider_id="nvidia",
+        label="NVIDIA NIM",
+        env_key="NVIDIA_API_KEY",
+        key_hint_prefix="nvapi-",
+        min_key_len=20,
+        default_models=(
+            ("meta/llama-3.3-70b-instruct", "Llama 3.3 70B"),
+            ("nvidia/llama-3.3-nemotron-super-49b-v1", "Nemotron Super 49B"),
+            ("deepseek-ai/deepseek-r1", "DeepSeek R1"),
+        ),
+    ),
+    "zai": _OpenAICompatSpec(
+        provider_id="zai",
+        label="Z.AI / GLM",
+        env_key="GLM_API_KEY",
+        key_hint_prefix="",
+        min_key_len=20,
+        default_models=(
+            ("glm-4.6", "GLM 4.6 flagship"),
+            ("glm-4.5-air", "GLM 4.5 Air — fast"),
+        ),
+    ),
+    "moonshot": _OpenAICompatSpec(
+        provider_id="moonshot",
+        label="Moonshot (Kimi)",
+        env_key="MOONSHOT_API_KEY",
+        key_hint_prefix="sk-",
+        min_key_len=20,
+        default_models=(
+            ("moonshot-v1-32k", "Kimi 32k ctx"),
+            ("moonshot-v1-128k", "Kimi 128k ctx"),
+            ("kimi-k2-0905-preview", "Kimi K2 preview"),
+        ),
+    ),
+    "ollama_cloud": _OpenAICompatSpec(
+        provider_id="ollama_cloud",
+        label="Ollama Cloud",
+        env_key="OLLAMA_CLOUD_API_KEY",
+        key_hint_prefix="",
+        min_key_len=20,
+        default_models=(
+            ("gpt-oss:120b", "GPT-OSS 120B"),
+            ("gpt-oss:20b", "GPT-OSS 20B"),
+            ("qwen3-coder:480b", "Qwen 3 Coder 480B"),
+        ),
+    ),
 }
 
 

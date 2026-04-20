@@ -17,7 +17,8 @@ are usually out of scope — open an issue first.
 
 ```
 koda/
-  adapters/       Provider adapters (10): anthropic, ollama, gemini, …
+  adapters/       Provider adapters (direct) + OpenAICompatProvider for cloud-compat
+  providers/      Catalog — 22 providers (2 local + 20 cloud), declarative
   agent/          Turn loop, agent state
   audit/          Append-only JSONL audit log
   auth/           Credential broker + redaction

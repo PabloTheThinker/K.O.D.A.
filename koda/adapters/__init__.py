@@ -3,6 +3,10 @@ from __future__ import annotations
 
 from typing import Any
 
+# Providers that share the OpenAI-compat adapter differ only in their
+# endpoint + env var. The list is derived from the catalog — adding a
+# new entry there is all that's needed to route it here.
+from ..providers.catalog import openai_compat_ids as _openai_compat_ids
 from .anthropic_api import AnthropicAPIProvider
 from .azure_openai import AzureOpenAIProvider
 from .base import Message, Provider, ProviderResponse, Role, ToolCall, ToolChoice, ToolSpec
@@ -13,22 +17,10 @@ from .ollama import OllamaProvider
 from .openai_compat import OpenAICompatProvider
 from .vertex_ai import VertexAIProvider
 
-# Providers that share the OpenAI-compat adapter differ only in their
-# endpoint + env var. Listing them here lets create_provider inject the
-# right ``provider_name`` so the adapter routes correctly.
 _OPENAI_COMPAT_ALIASES: tuple[str, ...] = (
-    "openai",
-    "groq",
-    "together",
-    "openrouter",
-    "deepseek",
-    "xai",
-    "grok",
-    "mistral",
-    "fireworks",
-    "cerebras",
-    "perplexity",
-    "openai_compat",
+    *_openai_compat_ids(),
+    "grok",            # friendly alias for xai
+    "openai_compat",   # raw compat mode — caller supplies base_url
 )
 
 _DIRECT: dict[str, type[Provider]] = {

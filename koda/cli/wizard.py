@@ -41,15 +41,8 @@ from ..wizard import (
     WizardCancelled,
     detect_anthropic_env_key,
     detect_azure_openai_env_key,
-    detect_deepseek_env_key,
     detect_gemini_env_key,
-    detect_groq_env_key,
-    detect_mistral_env_key,
     detect_ollama_models,
-    detect_openai_env_key,
-    detect_openrouter_env_key,
-    detect_together_env_key,
-    detect_xai_env_key,
     save_secrets,
     setup_anthropic,
     setup_azure_openai,
@@ -93,93 +86,64 @@ class _ProviderOption:
     detail_fn: Callable[[Any], str] | None = None
 
 
-# Local-first ordering: no-key providers surface before cloud tiers.
-_PROVIDER_OPTIONS: tuple[_ProviderOption, ...] = (
-    _ProviderOption(
-        value="ollama", label="Ollama",
-        base_hint="local models, no API key",
-        detector=detect_ollama_models,
-        detail_fn=lambda v: f"{len(v)} model(s) available" if v else "not reachable",
-    ),
-    _ProviderOption(
-        value="anthropic", label="Anthropic (Claude)",
-        base_hint="API — ANTHROPIC_API_KEY",
-        detector=detect_anthropic_env_key,
-        detail_fn=lambda v: "key detected" if v else "no key",
-    ),
-    _ProviderOption(
-        value="openai", label="OpenAI",
-        base_hint="API — OPENAI_API_KEY",
-        detector=detect_openai_env_key,
-        detail_fn=lambda v: "key detected" if v else "no key",
-    ),
-    _ProviderOption(
-        value="gemini", label="Google Gemini",
-        base_hint="API — GEMINI_API_KEY",
-        detector=detect_gemini_env_key,
-        detail_fn=lambda v: "key detected" if v else "no key",
-    ),
-    _ProviderOption(
-        value="groq", label="Groq",
-        base_hint="API — GROQ_API_KEY, fastest inference",
-        detector=detect_groq_env_key,
-        detail_fn=lambda v: "key detected" if v else "no key",
-    ),
-    _ProviderOption(
-        value="together", label="Together AI",
-        base_hint="API — TOGETHER_API_KEY",
-        detector=detect_together_env_key,
-        detail_fn=lambda v: "key detected" if v else "no key",
-    ),
-    _ProviderOption(
-        value="openrouter", label="OpenRouter",
-        base_hint="API — OPENROUTER_API_KEY, many models",
-        detector=detect_openrouter_env_key,
-        detail_fn=lambda v: "key detected" if v else "no key",
-    ),
-    _ProviderOption(
-        value="deepseek", label="DeepSeek",
-        base_hint="API — DEEPSEEK_API_KEY",
-        detector=detect_deepseek_env_key,
-        detail_fn=lambda v: "key detected" if v else "no key",
-    ),
-    _ProviderOption(
-        value="xai", label="xAI (Grok)",
-        base_hint="API — XAI_API_KEY",
-        detector=detect_xai_env_key,
-        detail_fn=lambda v: "key detected" if v else "no key",
-    ),
-    _ProviderOption(
-        value="mistral", label="Mistral",
-        base_hint="API — MISTRAL_API_KEY",
-        detector=detect_mistral_env_key,
-        detail_fn=lambda v: "key detected" if v else "no key",
-    ),
-    _ProviderOption(
-        value="azure_openai", label="Azure OpenAI",
-        base_hint="Azure deployment — AZURE_OPENAI_API_KEY",
-        detector=detect_azure_openai_env_key,
-        detail_fn=lambda v: "key detected" if v else "no key",
-    ),
-    _ProviderOption(
-        value="vertex_ai", label="Google Vertex AI",
-        base_hint="enterprise Gemini — ADC or explicit token",
-        detector=None,
-        detail_fn=None,
-    ),
-    _ProviderOption(
-        value="bedrock", label="AWS Bedrock",
-        base_hint="AWS credential chain — no API key stored",
-        detector=None,
-        detail_fn=None,
-    ),
-    _ProviderOption(
-        value="llamacpp", label="llama.cpp (local)",
-        base_hint="local server — no API key needed",
-        detector=None,
-        detail_fn=None,
-    ),
-)
+def _env_detector(env_keys: tuple[str, ...]) -> Callable[[], str | None]:
+    def _detect() -> str | None:
+        for name in env_keys:
+            val = os.environ.get(name, "").strip()
+            if val:
+                return val
+        return None
+    return _detect
+
+
+def _build_provider_options() -> tuple[_ProviderOption, ...]:
+    """Derive the wizard menu from the provider catalog.
+
+    Local tier renders before cloud; Ollama gets a live-model probe,
+    Gemini keeps its filesystem-fallback detection, everything else
+    uses a generic env-var probe built from the catalog entry.
+    """
+    from ..providers.catalog import PROVIDER_CATALOG
+
+    options: list[_ProviderOption] = []
+    local: list[_ProviderOption] = []
+    cloud: list[_ProviderOption] = []
+    for entry in PROVIDER_CATALOG:
+        if entry.id == "ollama":
+            opt = _ProviderOption(
+                value=entry.id, label=entry.label,
+                base_hint=entry.hint,
+                detector=detect_ollama_models,
+                detail_fn=lambda v: f"{len(v)} model(s) available" if v else "not reachable",
+            )
+        elif entry.id == "gemini":
+            opt = _ProviderOption(
+                value=entry.id, label=entry.label,
+                base_hint=entry.hint,
+                detector=detect_gemini_env_key,
+                detail_fn=lambda v: "key detected" if v else "no key",
+            )
+        elif entry.env_keys:
+            opt = _ProviderOption(
+                value=entry.id, label=entry.label,
+                base_hint=entry.hint,
+                detector=_env_detector(entry.env_keys),
+                detail_fn=lambda v: "key detected" if v else "no key",
+            )
+        else:
+            opt = _ProviderOption(
+                value=entry.id, label=entry.label,
+                base_hint=entry.hint,
+                detector=None, detail_fn=None,
+            )
+        (local if entry.tier == "local" else cloud).append(opt)
+
+    options.extend(local)
+    options.extend(cloud)
+    return tuple(options)
+
+
+_PROVIDER_OPTIONS: tuple[_ProviderOption, ...] = _build_provider_options()
 
 
 _APPROVAL_OPTIONS: list[SelectOption] = [
@@ -234,6 +198,8 @@ def _detect_available(prompter: Prompter) -> tuple[list[SelectOption], list[bool
 
 
 def _run_provider_setup(prompter: Prompter, provider_id: str) -> ProviderSetupResult:
+    from ..providers.catalog import by_id as _catalog_entry
+
     if provider_id == "anthropic":
         return setup_anthropic(prompter, existing_key=detect_anthropic_env_key())
     if provider_id == "azure_openai":
@@ -248,7 +214,8 @@ def _run_provider_setup(prompter: Prompter, provider_id: str) -> ProviderSetupRe
         return setup_vertex_ai(prompter)
     if provider_id == "bedrock":
         return setup_bedrock(prompter)
-    if provider_id in {"openai", "groq", "together", "openrouter", "deepseek", "xai", "mistral"}:
+    entry = _catalog_entry(provider_id)
+    if entry is not None and entry.transport == "openai_compat":
         return setup_openai_compat(prompter, provider_id)
     raise ValueError(f"unknown provider: {provider_id}")
 

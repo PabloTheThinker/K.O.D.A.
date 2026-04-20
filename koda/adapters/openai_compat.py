@@ -8,8 +8,7 @@ provider by name (``provider: "groq"``), override the endpoint
 explicitly (``base_url: "http://vllm.internal"``), or both.
 
 Design:
-  - ``_ENDPOINTS`` maps provider id → API base URL.
-  - ``_ENV_KEYS`` maps provider id → env var fallback for the API key.
+  - Endpoints + env vars come from :mod:`koda.providers.catalog`.
   - Tool-calls round-trip as OpenAI-shape: request carries ``tools`` +
     ``tool_choice``, response emits ``message.tool_calls[].function``.
   - Errors surface as ``stop_reason="error"`` with the status code and
@@ -26,45 +25,20 @@ from typing import Any
 
 import httpx
 
+from ..providers.catalog import by_id as _catalog_entry
 from .base import Message, Provider, ProviderResponse, Role, ToolCall, ToolChoice, ToolSpec
-
-_ENDPOINTS: dict[str, str] = {
-    "openai": "https://api.openai.com/v1",
-    "groq": "https://api.groq.com/openai/v1",
-    "together": "https://api.together.xyz/v1",
-    "openrouter": "https://openrouter.ai/api/v1",
-    "deepseek": "https://api.deepseek.com/v1",
-    "xai": "https://api.x.ai/v1",
-    "mistral": "https://api.mistral.ai/v1",
-    "fireworks": "https://api.fireworks.ai/inference/v1",
-    "cerebras": "https://api.cerebras.ai/v1",
-    "perplexity": "https://api.perplexity.ai",
-}
-
-# Per-provider env var fallbacks. Config values always win; env is the
-# backup if the secrets file hasn't been loaded yet.
-_ENV_KEYS: dict[str, tuple[str, ...]] = {
-    "openai": ("OPENAI_API_KEY",),
-    "groq": ("GROQ_API_KEY",),
-    "together": ("TOGETHER_API_KEY",),
-    "openrouter": ("OPENROUTER_API_KEY",),
-    "deepseek": ("DEEPSEEK_API_KEY",),
-    "xai": ("XAI_API_KEY", "GROK_API_KEY"),
-    "mistral": ("MISTRAL_API_KEY",),
-    "fireworks": ("FIREWORKS_API_KEY",),
-    "cerebras": ("CEREBRAS_API_KEY",),
-    "perplexity": ("PERPLEXITY_API_KEY",),
-}
 
 
 def _resolve_api_key(config: dict[str, Any], provider_id: str) -> str:
     direct = config.get("api_key") or config.get("apiKey")
     if direct:
         return str(direct)
-    for env_name in _ENV_KEYS.get(provider_id, ()):
-        val = os.environ.get(env_name)
-        if val:
-            return val
+    entry = _catalog_entry(provider_id)
+    if entry is not None:
+        for env_name in entry.env_keys:
+            val = os.environ.get(env_name)
+            if val:
+                return val
     return ""
 
 
@@ -72,7 +46,14 @@ def _resolve_base_url(config: dict[str, Any], provider_id: str) -> str:
     explicit = config.get("base_url") or config.get("baseUrl") or config.get("endpoint")
     if explicit:
         return str(explicit).rstrip("/")
-    return _ENDPOINTS.get(provider_id, "").rstrip("/")
+    entry = _catalog_entry(provider_id)
+    if entry is None:
+        return ""
+    if entry.base_url_env:
+        override = os.environ.get(entry.base_url_env, "").strip()
+        if override:
+            return override.rstrip("/")
+    return entry.base_url.rstrip("/")
 
 
 def _translate_messages(messages: list[Message]) -> list[dict[str, Any]]:
