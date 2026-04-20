@@ -880,7 +880,7 @@ def _update_via_git(
         print(f"{GREEN}✓{RESET} updated: v{current_version} → {BOLD}v{new_version}{RESET}")
     else:
         print(f"{GREEN}✓{RESET} updated ({short(current_sha)} → {short(remote_sha)})")
-    print(f"  restart any running `koda` sessions.")
+    print("  restart any running `koda` sessions.")
     return 0
 
 
