@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Provider-catalog refactor, operator onboarding polish, offline tour, and
+turn-level cost accounting. 767 tests, ruff clean.
+
+### Added
+- **Declarative provider catalog** (`koda/providers/catalog.py`) — single
+  source of truth for the 22 supported backends (2 local + 20 cloud).
+  The wizard menu, OpenAI-compat routing, and `create_provider()` dispatch
+  are all derived from this table. Adding an OpenAI-compatible cloud
+  provider is now a single catalog append.
+- **Eight new cloud providers** via the OpenAI-compat transport: Cerebras,
+  Fireworks, Perplexity, Hugging Face Inference, NVIDIA NIM, Z.AI / GLM,
+  Moonshot (Kimi), and Ollama Cloud. All verified against live endpoints.
+- **Recommended-first wizard picker** — local and most-used cloud providers
+  surface at the top of the setup menu; the rest collapse under "more
+  cloud providers" so the first-run screen fits on a laptop without
+  scrolling.
+- **Tool-use capability probe** — the wizard performs a real tool-calling
+  round trip before writing config. Adapters without tool-use support are
+  flagged (`supports_tools=False` in the catalog) and the operator is
+  warned before the run.
+- **`koda bundle export|verify`** — local-only evidence bundle CLI wrapping
+  `evidence/bundle.py`. Produces a reproducible `tar.gz` plus a plain
+  `.sha256` sidecar; verification is stdlib-only.
+- **`koda demo`** — offline synthetic engagement that exercises the
+  approval gate, grounding verifier, evidence store, and report renderer
+  end-to-end without touching a real target. Useful for first-run smoke
+  tests and demos on air-gapped laptops.
+- **Cost tracking**: `koda/providers/pricing.py` ships a USD-per-Mtok
+  table with longest-prefix matching; the turn loop now records `model`
+  and `cost_usd` on every `turn.complete` / `turn.aborted` audit event.
+  New `koda cost [--by model|engagement|session] [--since YYYY-MM-DD]`
+  command rolls up the audit log into a forensic cost report. Local and
+  unpriced models are counted in tokens only.
+
+### Changed
+- **Ollama Cloud env var** — primary key is now `OLLAMA_API_KEY` per
+  the official Ollama Cloud docs; `OLLAMA_CLOUD_API_KEY` is retained as
+  a secondary alias so existing configs keep working.
+- README provider table rewritten to cover all 22 providers with tier /
+  detection mechanism / env key columns.
+
+### Fixed
+- Wizard previously advertised Claude CLI as a provider option — removed
+  along with the legacy adapter (direct Anthropic API is the supported
+  Claude path).
+
+### Docs
+- New `CLAUDE.md`, `VISION.md`, `INCIDENT_RESPONSE.md` at the repo root
+  aligning K.O.D.A. with the OpenClaw documentation surface.
+- New `docs/providers.md` — provider catalog story, env var map,
+  air-gap guidance, and "how to add a provider" recipe.
+- `PYPI_SETUP.md` moved to `docs/release.md` (internal release runbook).
+
 ## [0.6.0] — 2026-04-19
 
 Security-framework turn: outcome-oriented audit presets, remote SSH

@@ -48,6 +48,7 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Install: install.md
+  - Providers: providers.md
   - Security model: security-model.md
   - Skill packs: skills.md
   - Audit presets: audit-presets.md
@@ -56,7 +57,10 @@ nav:
   - Continuous monitoring: continuous-monitoring.md
   - MCP hardening: mcp-hardened.md
   - Compatibility: compatibility.md
+  - Release runbook: release.md
+  - Vision: https://github.com/PabloTheThinker/K.O.D.A./blob/main/VISION.md
   - Contributing: https://github.com/PabloTheThinker/K.O.D.A./blob/main/CONTRIBUTING.md
+  - Incident response: https://github.com/PabloTheThinker/K.O.D.A./blob/main/INCIDENT_RESPONSE.md
   - Roadmap: https://github.com/PabloTheThinker/K.O.D.A./blob/main/ROADMAP.md
   - Changelog: https://github.com/PabloTheThinker/K.O.D.A./blob/main/CHANGELOG.md
 

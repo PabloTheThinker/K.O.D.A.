@@ -1,6 +1,9 @@
-# PyPI Setup — First-time checklist
+# Release runbook (PyPI + GitHub Pages)
 
-One-time setup to publish `koda-security` on PyPI. Works off a phone or
+Operational notes for cutting a K.O.D.A. release — one-time PyPI setup
+plus the per-release checklist.
+
+## One-time: publishing `koda-security` on PyPI Works off a phone or
 laptop. ~10 minutes if nothing goes sideways.
 
 We're using **Trusted Publishing (OIDC)**, so no API tokens are ever
