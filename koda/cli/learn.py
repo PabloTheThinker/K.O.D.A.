@@ -22,9 +22,13 @@ from koda.learning import (
 )
 from koda.learning.schedule import (
     DEFAULT_CRON_EXPR,
+    DEFAULT_REPORT_CRON_EXPR,
     get_learn_schedule,
+    get_report_schedule,
     install_learn_schedule,
+    install_report_schedule,
     remove_learn_schedule,
+    remove_report_schedule,
 )
 
 _GREEN = "\033[32m"
@@ -55,6 +59,8 @@ def main(argv: list[str]) -> int:
         return _cmd_status(rest)
     if cmd == "schedule":
         return _cmd_schedule(rest)
+    if cmd == "report":
+        return _cmd_report(rest)
 
     print(f"error: unknown subcommand {cmd!r}", file=sys.stderr)
     print("run `koda learn --help` for usage", file=sys.stderr)
@@ -68,6 +74,8 @@ def _print_help() -> None:
     print("       koda learn reject  <name>")
     print("       koda learn status")
     print("       koda learn schedule [install|remove|status] [cron_expr]")
+    print("       koda learn schedule report [install|remove|status] [cron_expr]")
+    print("       koda learn report [--since DUR] [--stdout]")
     print()
     print("  run              (default) consolidate Helix, scan for candidates,")
     print("                   write drafts to _pending/")
@@ -77,6 +85,7 @@ def _print_help() -> None:
     print("  reject  <name>   archive draft under _rejected/")
     print("  status           show pipeline counts")
     print("  schedule         install or remove nightly `koda learn run` cron")
+    print("  report           write LEARNED-<date>.md digest under _reports/")
 
 
 def _cmd_run(argv: list[str]) -> int:
@@ -342,6 +351,10 @@ def _make_synthesizer(provider_name: str | None, model: str | None):
 
 
 def _cmd_schedule(argv: list[str]) -> int:
+    # `schedule report ...` routes to the digest-schedule manager.
+    if argv and argv[0] == "report":
+        return _cmd_schedule_report(argv[1:])
+
     if not argv or argv[0] in {"-h", "--help", "status"}:
         entry = get_learn_schedule()
         if entry is None:
@@ -379,6 +392,116 @@ def _cmd_schedule(argv: list[str]) -> int:
     print(f"error: unknown schedule action {action!r}", file=sys.stderr)
     print("usage: koda learn schedule [install [cron_expr] | remove | status]", file=sys.stderr)
     return 2
+
+
+def _cmd_schedule_report(argv: list[str]) -> int:
+    if not argv or argv[0] in {"-h", "--help", "status"}:
+        entry = get_report_schedule()
+        if entry is None:
+            print(f"{_DIM}no learn-report schedule installed{_RESET}")
+            print(f"  install: {_DIM}koda learn schedule report install [cron_expr]{_RESET}")
+            return 0
+        print(f"{_GREEN}✓ installed{_RESET}")
+        print(f"  cron:    {entry.cron_expr}")
+        print(f"  command: {entry.command}")
+        return 0
+
+    action = argv[0]
+    if action == "install":
+        cron_expr = argv[1] if len(argv) > 1 else DEFAULT_REPORT_CRON_EXPR
+        try:
+            entry = install_report_schedule(cron_expr=cron_expr)
+        except Exception as exc:
+            print(f"error: could not install cron entry: {exc}", file=sys.stderr)
+            return 1
+        print(f"{_GREEN}✓ installed{_RESET} {entry.cron_expr}  {_DIM}{entry.command}{_RESET}")
+        return 0
+
+    if action == "remove":
+        try:
+            removed = remove_report_schedule()
+        except Exception as exc:
+            print(f"error: could not remove cron entry: {exc}", file=sys.stderr)
+            return 1
+        if removed:
+            print(f"{_GREEN}✓ removed{_RESET}")
+        else:
+            print(f"{_DIM}nothing to remove{_RESET}")
+        return 0
+
+    print(f"error: unknown schedule report action {action!r}", file=sys.stderr)
+    print(
+        "usage: koda learn schedule report [install [cron_expr] | remove | status]",
+        file=sys.stderr,
+    )
+    return 2
+
+
+def _cmd_report(argv: list[str]) -> int:
+    if argv and argv[0] in {"-h", "--help"}:
+        print("usage: koda learn report [--since DUR] [--stdout]")
+        print()
+        print("  DUR accepts suffixes: 30m, 24h, 7d (default: 24h).")
+        print("  Pass --since none or --since all for a lifetime snapshot.")
+        return 0
+
+    since_raw = "24h"
+    to_stdout = False
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--since" and i + 1 < len(argv):
+            since_raw = argv[i + 1]
+            i += 1
+        elif arg == "--stdout":
+            to_stdout = True
+        else:
+            print(f"error: unknown flag {arg!r}", file=sys.stderr)
+            return 2
+        i += 1
+
+    from koda.learning.report import generate_report, write_report
+
+    since = _parse_since(since_raw)
+    report = generate_report(since=since)
+
+    if to_stdout:
+        sys.stdout.write(report.render_markdown())
+        if not report.render_markdown().endswith("\n"):
+            sys.stdout.write("\n")
+        return 0
+
+    dest = write_report(report)
+    window = "lifetime" if since is None else f"since {since.isoformat()}"
+    print(
+        f"{_GREEN}✓ digest written{_RESET} {dest}  "
+        f"{_DIM}({window}): "
+        f"pending={len(report.pending)} approved={len(report.approved)} "
+        f"rejected={len(report.rejected)}{_RESET}"
+    )
+    return 0
+
+
+def _parse_since(raw: str):
+    """Parse ``--since`` values: ``24h`` / ``7d`` / ``30m`` / ``none|all``."""
+    from datetime import UTC, datetime, timedelta
+
+    raw = raw.strip().lower()
+    if raw in {"none", "all", "0", ""}:
+        return None
+    units = {"m": 60, "h": 3600, "d": 86400}
+    if raw[-1] in units and raw[:-1].isdigit():
+        seconds = int(raw[:-1]) * units[raw[-1]]
+        return datetime.now(UTC) - timedelta(seconds=seconds)
+    # Fallback: attempt ISO-8601 parse.
+    try:
+        ts = datetime.fromisoformat(raw.replace("z", "+00:00"))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
+        return ts
+    except ValueError:
+        # Permissive default — 24 h if we can't parse it.
+        return datetime.now(UTC) - timedelta(hours=24)
 
 
 def _open_helix():

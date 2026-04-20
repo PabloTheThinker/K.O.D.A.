@@ -89,3 +89,57 @@ def test_get_returns_parsed_entry(fake_cron: _FakeCrontab) -> None:
 
 def test_get_returns_none_when_absent(fake_cron: _FakeCrontab) -> None:
     assert sched.get_learn_schedule() is None
+
+
+# ── report schedule ───────────────────────────────────────────────
+
+
+def test_report_install_writes_separate_entry(fake_cron: _FakeCrontab) -> None:
+    entry = sched.install_report_schedule(cron_expr="0 8 * * *")
+    assert entry.cron_expr == "0 8 * * *"
+    assert "# koda-learn-report" in entry.raw
+    assert "koda learn report" in entry.command
+
+
+def test_learn_and_report_coexist(fake_cron: _FakeCrontab) -> None:
+    sched.install_learn_schedule()
+    sched.install_report_schedule()
+    lines = fake_cron.content.splitlines()
+    learn_lines = [
+        ln for ln in lines
+        if "# koda-learn" in ln and "# koda-learn-report" not in ln
+    ]
+    report_lines = [ln for ln in lines if "# koda-learn-report" in ln]
+    assert len(learn_lines) == 1
+    assert len(report_lines) == 1
+
+
+def test_report_remove_does_not_touch_learn(fake_cron: _FakeCrontab) -> None:
+    sched.install_learn_schedule()
+    sched.install_report_schedule()
+    assert sched.remove_report_schedule() is True
+    assert "# koda-learn-report" not in fake_cron.content
+    # Learn entry survives.
+    assert sched.get_learn_schedule() is not None
+
+
+def test_learn_remove_does_not_touch_report(fake_cron: _FakeCrontab) -> None:
+    sched.install_learn_schedule()
+    sched.install_report_schedule()
+    assert sched.remove_learn_schedule() is True
+    # The report entry survives.
+    entry = sched.get_report_schedule()
+    assert entry is not None
+    assert "koda learn report" in entry.command
+
+
+def test_report_install_is_idempotent(fake_cron: _FakeCrontab) -> None:
+    sched.install_report_schedule()
+    sched.install_report_schedule(cron_expr="15 7 * * *")
+    lines = [ln for ln in fake_cron.content.splitlines() if "# koda-learn-report" in ln]
+    assert len(lines) == 1
+    assert lines[0].startswith("15 7 * * *")
+
+
+def test_get_report_returns_none_when_absent(fake_cron: _FakeCrontab) -> None:
+    assert sched.get_report_schedule() is None
