@@ -502,6 +502,7 @@ def main(argv: list[str] | None = None) -> int:
         print("       koda schedule add|list|run  scheduled monitoring + diff alerts")
         print("       koda remote push|pull|list  sync evidence bundles to/from S3/R2/MinIO")
         print("       koda update                 pull + install the latest release")
+        print("       koda check                  run repo linter + tests (pre-push hygiene)")
         print("       koda uninstall              remove K.O.D.A. (interactive checklist)")
         print("       koda profile <cmd>          list | create | use | delete | show")
         print("       koda version                print version and exit")
@@ -545,6 +546,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if argv and argv[0] == "update":
         return _cmd_update(argv[1:])
+
+    if argv and argv[0] == "check":
+        return _cmd_check(argv[1:])
 
     if argv and argv[0] == "uninstall":
         return _cmd_uninstall(argv[1:])
@@ -895,6 +899,177 @@ def _read_version(init_path) -> str | None:
         return _extract_version(init_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError):
         return None
+
+
+def _cmd_check(argv: list[str]) -> int:
+    """Run repo linter + tests to verify changes before push.
+
+    Detects project type in the current working directory and runs the
+    configured tools:
+
+      * Python (``pyproject.toml`` present): ``ruff check .`` then ``pytest``
+        if a ``tests/`` directory exists.
+      * JS/TS (``package.json`` present): ``npm run lint`` and ``npm test``
+        if those scripts are defined.
+
+    Exits non-zero on the first failure so it composes with shell:
+    ``koda check && git push``.
+    """
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    if argv and argv[0] in {"-h", "--help"}:
+        print("usage: koda check [--lint-only] [--tests-only] [--dir PATH]")
+        print("                  [--install-hook] [--uninstall-hook]")
+        print()
+        print("  --lint-only       skip the test suite")
+        print("  --tests-only      skip the linter")
+        print("  --dir PATH        run against PATH instead of cwd")
+        print("  --install-hook    write a .git/hooks/pre-push calling `koda check`")
+        print("  --uninstall-hook  remove the pre-push hook")
+        return 0
+
+    lint_only = False
+    tests_only = False
+    install_hook = False
+    uninstall_hook = False
+    target_dir: Path | None = None
+
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--lint-only":
+            lint_only = True
+        elif arg == "--tests-only":
+            tests_only = True
+        elif arg == "--install-hook":
+            install_hook = True
+        elif arg == "--uninstall-hook":
+            uninstall_hook = True
+        elif arg == "--dir" and i + 1 < len(argv):
+            target_dir = Path(argv[i + 1]).resolve()
+            i += 1
+        else:
+            print(f"error: unknown flag {arg!r}", file=sys.stderr)
+            print("run `koda check --help` for usage", file=sys.stderr)
+            return 2
+        i += 1
+
+    root = target_dir or Path.cwd()
+
+    if install_hook or uninstall_hook:
+        return _check_manage_hook(root, install=install_hook)
+
+    if lint_only and tests_only:
+        print("error: --lint-only and --tests-only are mutually exclusive", file=sys.stderr)
+        return 2
+
+    GREEN = "\033[32m"
+    RED = "\033[31m"
+    YELLOW = "\033[33m"
+    DIM = "\033[2m"
+    BOLD = "\033[1m"
+    RESET = "\033[0m"
+
+    has_pyproject = (root / "pyproject.toml").exists()
+    has_package_json = (root / "package.json").exists()
+
+    if not has_pyproject and not has_package_json:
+        print(f"{YELLOW}⚠ no pyproject.toml or package.json in {root}{RESET}", file=sys.stderr)
+        print("  nothing to check.", file=sys.stderr)
+        return 1
+
+    def run(label: str, cmd: list[str]) -> int:
+        print(f"{DIM}→{RESET} {BOLD}{label}{RESET} {DIM}({' '.join(cmd)}){RESET}")
+        result = subprocess.run(cmd, cwd=str(root))
+        if result.returncode == 0:
+            print(f"  {GREEN}✓ passed{RESET}")
+        else:
+            print(f"  {RED}✗ failed (exit {result.returncode}){RESET}")
+        return result.returncode
+
+    # ── Lint ──────────────────────────────────────────────────────
+    if not tests_only:
+        if has_pyproject:
+            if shutil.which("ruff") is None:
+                print(f"{YELLOW}⚠ ruff not installed — skipping lint{RESET}", file=sys.stderr)
+            else:
+                rc = run("ruff", ["ruff", "check", "."])
+                if rc != 0:
+                    return rc
+        if has_package_json and _npm_has_script(root, "lint"):
+            rc = run("npm lint", ["npm", "run", "lint"])
+            if rc != 0:
+                return rc
+
+    # ── Tests ─────────────────────────────────────────────────────
+    if not lint_only:
+        if has_pyproject and (root / "tests").is_dir():
+            if shutil.which("pytest") is None:
+                print(f"{YELLOW}⚠ pytest not installed — skipping tests{RESET}", file=sys.stderr)
+            else:
+                rc = run("pytest", ["pytest", "-q"])
+                if rc != 0:
+                    return rc
+        if has_package_json and _npm_has_script(root, "test"):
+            rc = run("npm test", ["npm", "test", "--silent"])
+            if rc != 0:
+                return rc
+
+    print()
+    print(f"{GREEN}✓ check passed{RESET}")
+    return 0
+
+
+def _npm_has_script(root, name: str) -> bool:
+    """Return True if ``package.json`` defines a script named ``name``."""
+    import json
+    try:
+        data = json.loads((root / "package.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    scripts = data.get("scripts")
+    return isinstance(scripts, dict) and name in scripts
+
+
+def _check_manage_hook(root, *, install: bool) -> int:
+    """Install or remove a ``.git/hooks/pre-push`` that runs ``koda check``."""
+    from pathlib import Path
+
+    git_dir = Path(root) / ".git"
+    if not git_dir.is_dir():
+        print(f"error: {root} is not a git repository", file=sys.stderr)
+        return 1
+
+    hook = git_dir / "hooks" / "pre-push"
+    hook.parent.mkdir(parents=True, exist_ok=True)
+
+    if install:
+        hook.write_text(
+            "#!/usr/bin/env bash\n"
+            "# Installed by `koda check --install-hook`\n"
+            "exec koda check\n"
+        )
+        hook.chmod(0o755)
+        print(f"✓ pre-push hook installed: {hook}")
+        return 0
+
+    # uninstall
+    if hook.exists():
+        # Only remove hooks we likely created, to avoid nuking user hooks.
+        try:
+            body = hook.read_text(encoding="utf-8")
+        except OSError:
+            body = ""
+        if "koda check --install-hook" in body:
+            hook.unlink()
+            print(f"✓ pre-push hook removed: {hook}")
+            return 0
+        print(f"⚠ {hook} exists but was not created by koda — leaving it alone", file=sys.stderr)
+        return 1
+    print(f"no pre-push hook at {hook}")
+    return 0
 
 
 def _cmd_uninstall(argv: list[str]) -> int:
