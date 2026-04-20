@@ -28,11 +28,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import ssl
 import sys
 from pathlib import Path
 from typing import Any
 
+from ..learning.hook import get_global_hook, install_global_hook
 from ..tools import builtins as _builtins  # triggers tool registration
 from ..tools.registry import Tool, global_registry
 
@@ -91,12 +93,41 @@ def _bind_tool(mcp, tool: Tool) -> None:
         }
         if result.metadata:
             payload["metadata"] = result.metadata
+        hook = get_global_hook()
+        if hook is not None and not result.is_error:
+            try:
+                hook.record_tool_call()
+            except Exception:
+                pass
         return json.dumps(payload, default=str)
 
     mcp.add_tool(
         handler,
         name=_mcp_tool_name(tool.name),
         description=_describe_tool(tool),
+    )
+
+
+def _maybe_install_learning_hook() -> None:
+    """Opt-in live learning when KODA_LEARN_LIVE=1 is set.
+
+    Env-gated so MCP stays functionally identical by default; operators flip
+    the switch per-deploy. Thresholds are overridable via env too.
+    """
+    if os.environ.get("KODA_LEARN_LIVE", "").strip().lower() not in {"1", "true", "yes", "on"}:
+        return
+
+    def _int_env(name: str, default: int) -> int:
+        raw = os.environ.get(name, "").strip()
+        try:
+            return int(raw) if raw else default
+        except ValueError:
+            return default
+
+    install_global_hook(
+        turn_threshold=_int_env("KODA_LEARN_TURN_THRESHOLD", 10),
+        tool_threshold=_int_env("KODA_LEARN_TOOL_THRESHOLD", 10),
+        min_interval_seconds=_int_env("KODA_LEARN_MIN_INTERVAL", 60),
     )
 
 
@@ -114,6 +145,8 @@ def create_mcp_server():
             "quote only what the tool results contain."
         ),
     )
+
+    _maybe_install_learning_hook()
 
     registry = global_registry()
     for name in registry.names():

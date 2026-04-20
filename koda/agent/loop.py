@@ -24,6 +24,7 @@ from ..adapters.base import Message, Provider, Role, ToolCall
 from ..audit import AuditLogger, NullAuditLogger, hash_arguments
 from ..auth import CredentialBroker, NullCredentialBroker
 from ..evidence import EvidenceStore, NullEvidenceStore
+from ..learning.hook import LearningHook
 from ..nlu import IntentRouter, RouterDecision
 from ..security.guardian import Guardian
 from ..security.prompts import build_security_prompt
@@ -118,6 +119,7 @@ class TurnLoop:
         guardian: Guardian | None = None,
         reflection: ReflectionEngine | None = None,
         compressor: ContextCompressor | None = None,
+        learning_hook: LearningHook | None = None,
     ) -> None:
         self.provider = provider
         self.registry = registry
@@ -132,6 +134,7 @@ class TurnLoop:
         self.guardian = guardian
         self.reflection = reflection
         self.compressor = compressor
+        self.learning_hook = learning_hook
 
     def _build_messages(self, extra_system_prompt: str) -> list[Message]:
         system = Message(role=Role.SYSTEM, content=build_security_prompt(extra_system_prompt))
@@ -432,3 +435,12 @@ class TurnLoop:
             abort_reason=trace.abort_reason,
             final_len=len(trace.final_text),
         )
+        if self.learning_hook is not None:
+            try:
+                self.learning_hook.record_turn(
+                    tool_calls=trace.tool_calls_made,
+                    aborted=trace.aborted,
+                )
+            except Exception:
+                # Hook failures must never break the agent loop.
+                pass

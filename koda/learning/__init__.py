@@ -18,6 +18,13 @@ day one without network access.
 from __future__ import annotations
 
 from koda.learning.guard import GuardReport, scan_skill_draft
+from koda.learning.hook import (
+    LearningHook,
+    LearningHookStats,
+    disable_global_hook,
+    get_global_hook,
+    install_global_hook,
+)
 from koda.learning.promoter import PromotionCandidate, find_candidates
 from koda.learning.store import (
     LearnedSkillStore,
@@ -31,4 +38,6 @@ __all__ = [
     "PromotionCandidate", "find_candidates",
     "LearnedSkillStore", "PendingSkill", "default_store",
     "draft_skill_from_concept",
+    "LearningHook", "LearningHookStats",
+    "install_global_hook", "get_global_hook", "disable_global_hook",
 ]
