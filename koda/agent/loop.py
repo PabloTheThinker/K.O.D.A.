@@ -423,6 +423,13 @@ class TurnLoop:
 
     def _emit_turn_end(self, trace: TurnTrace, tokens_prompt: int, tokens_completion: int) -> None:
         event = "turn.aborted" if trace.aborted else "turn.complete"
+        model = ""
+        try:
+            model = self.provider.get_model() or ""
+        except Exception:
+            pass
+        from ..providers.pricing import estimate_cost_usd
+        cost_usd = estimate_cost_usd(model, tokens_prompt, tokens_completion)
         self.audit.emit(
             event,
             session_id=self.session_id,
@@ -432,6 +439,8 @@ class TurnLoop:
             verifier_rejections=trace.verifier_rejections,
             tokens_prompt=tokens_prompt,
             tokens_completion=tokens_completion,
+            model=model,
+            cost_usd=cost_usd,
             abort_reason=trace.abort_reason,
             final_len=len(trace.final_text),
         )

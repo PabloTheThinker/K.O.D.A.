@@ -502,6 +502,7 @@ def main(argv: list[str] | None = None) -> int:
         print("       koda bundle export|verify   create/verify a portable evidence bundle")
         print("       koda remote push|pull|list  sync evidence bundles to/from S3/R2/MinIO")
         print("       koda demo                   run a self-contained demo of the full loop")
+        print("       koda cost                   token + rough USD rollup from the audit log")
         print("       koda update                 pull + install the latest release")
         print("       koda check                  run repo linter + tests (pre-push hygiene)")
         print("       koda learn <cmd>            promote Helix concepts → skill drafts")
@@ -580,6 +581,10 @@ def main(argv: list[str] | None = None) -> int:
     if argv and argv[0] == "demo":
         from .demo import main as demo_main
         return demo_main(argv[1:])
+
+    if argv and argv[0] == "cost":
+        from .cost import main as cost_main
+        return cost_main(argv[1:])
 
     if argv and argv[0] == "scan":
         from .scan import main as scan_main
