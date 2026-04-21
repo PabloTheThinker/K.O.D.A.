@@ -72,7 +72,11 @@ def _translate_messages(messages: list[Message]) -> list[dict[str, Any]]:
                         "type": "function",
                         "function": {
                             "name": tc.name,
-                            "arguments": json.dumps(tc.arguments or {}),
+                            "arguments": json.dumps(
+                                tc.arguments or {},
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ),
                         },
                     }
                     for tc in msg.tool_calls
