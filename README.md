@@ -1,8 +1,9 @@
 <p align="center">
-  <h1 align="center">K.O.D.A.</h1>
-  <p align="center"><strong>Kinetic Operative Defense Agent</strong></p>
-  <p align="center"><em>Open-source security specialist — grounded tool-use, honest scanning, model-agnostic, air-gap ready.</em></p>
+  <img src="assets/koda-hero.jpg" alt="K.O.D.A." width="720">
 </p>
+
+<p align="center"><strong>Kinetic Operative Defense Agent</strong></p>
+<p align="center"><em>Open-source security specialist — grounded tool-use, honest scanning, model-agnostic, air-gap ready.</em></p>
 
 <p align="center">
   <a href="https://github.com/PabloTheThinker/K.O.D.A./actions/workflows/ci.yml"><img src="https://github.com/PabloTheThinker/K.O.D.A./actions/workflows/ci.yml/badge.svg" alt="CI"></a>
