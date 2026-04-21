@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/koda-hero.jpg" alt="K.O.D.A." width="720">
+  <img src="assets/koda-hero.png" alt="K.O.D.A." width="720">
 </p>
 
 <p align="center"><strong>Kinetic Operative Defense Agent</strong></p>
