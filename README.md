@@ -42,7 +42,9 @@ If you want a security agent that can be trusted with a real engagement — auth
 <tr><td><b>Rule-based NLU router</b></td><td>Pure-Python intent classifier (recon / exploit / IR / audit / lookup / admin / chat) runs before every LLM call. Extracts targets (domains, IPv4, usernames, CVEs, paths), infers risk tier, ranks matching skills, emits a <code>turn.route</code> audit event. No LLM calls in the hot path.</td></tr>
 <tr><td><b>Red / Blue / Purple harness</b></td><td>Phase-aware operator voice — 8 red phases (recon → exfil), 6 blue phases (defense, hunt, triage, IR, forensics, hardening). Every finding carries an ATT&CK technique ID. Sigma rules, CIS audits, and NIST 800-61 IR playbooks ship with the harness.</td></tr>
 <tr><td><b>Model-agnostic</b></td><td>22 providers (2 local + 20 cloud) behind one declarative catalog. Ollama, llama.cpp, Anthropic, OpenAI, Gemini, Azure, Vertex, Bedrock, Groq, Cerebras, Fireworks, Together, OpenRouter, DeepSeek, xAI, Mistral, Perplexity, Hugging Face, NVIDIA NIM, Z.AI/GLM, Moonshot, Ollama Cloud. Switch with <code>koda setup</code> — no code changes.</td></tr>
-<tr><td><b>Remote operations</b></td><td>Telegram bridge with inline-keyboard approvals, fragment buffering, and slash-command parity with the REPL. MCP server (stdio + SSE) exposes scanners and evidence tools to any MCP-compatible client.</td></tr>
+<tr><td><b>Remote operations</b></td><td>Telegram bridge with inline-keyboard approvals, fragment buffering, and slash-command parity with the REPL. MCP server (stdio + SSE) exposes scanners and evidence tools to any MCP-compatible client — bearer auth on by default, optional mTLS on SSE transport.</td></tr>
+<tr><td><b>Auto-discovery toolsets</b></td><td>Named toolsets (Hermes pattern) compose tools into coherent operator surfaces. <code>$KODA_HOME/plugins/</code> is scanned at boot — drop a plugin directory and its tools register automatically, no code changes.</td></tr>
+<tr><td><b>Cost observability</b></td><td>Per-turn + per-engagement cost rollup against a maintained pricing table. <code>koda cost</code> shows spend by provider, model, and engagement. No surprises on the invoice.</td></tr>
 <tr><td><b>Air-gap ready</b></td><td>Ollama local models, offline threat-intel cache (KEV, EPSS, CWE, NVD, ExploitDB, MITRE ATT&CK, CAPEC), stdlib-only verification. No outbound calls after initial corpus sync.</td></tr>
 </table>
 
@@ -86,9 +88,14 @@ koda setup                  # configure providers + verify credentials live
 koda doctor                 # verify config + provider status
 koda                        # start the interactive REPL
 koda telegram               # run the Telegram operator bridge
-koda mcp                    # expose tools over MCP (stdio + SSE)
+koda mcp                    # expose tools over MCP (stdio + SSE, bearer + mTLS)
 koda intel sync --all       # pull offline threat-intel corpus
-koda update                 # pull + install the latest release
+koda check                  # pre-push linter: repo hygiene + tests
+koda bundle                 # export / verify portable evidence bundles
+koda demo                   # offline guided tour of the harness
+koda cost                   # per-turn + per-engagement cost rollup
+koda learn                  # scheduled digest reports (PDF + delivery adapters)
+koda update                 # git fast path + changelog preview (--check)
 koda version                # print version and exit
 koda uninstall              # interactive removal checklist (--dry-run supported)
 ```
@@ -164,13 +171,15 @@ from koda.skills import load_default_packs
 count, errors = load_default_packs()
 ```
 
-**Built-in packs (v0.3.0):**
+**Built-in packs (v0.6.0):**
 
 | Pack | Mode | Phase | ATT&CK | Purpose |
 |------|------|-------|--------|---------|
 | `sherlock` | red | recon | T1589, T1593 | OSINT username search across 400+ social networks |
 | `oss-forensics` | blue | ir | T1195.002, T1588.001 | Supply-chain investigation of GitHub repositories |
 | `1password` | blue | hardening | T1552.001 | 1Password CLI integration for secret handling |
+| `port-monitor` | blue | hunt | T1046 | Baseline + diff open-port surface over time |
+| `log-analyzer` | blue | hunt | T1562.008 | Structured triage of syslog/journald/auth logs |
 
 Community packs compose the same way — drop the directory in `skills/` and it's live.
 
@@ -226,7 +235,7 @@ Found a vulnerability? See [SECURITY.md](./SECURITY.md) — **do not open a publ
            ▼                                     │
 ┌───────────────────────┐                        │
 │   Provider adapter    │                        │
-│  (11 backends, BYO)   │                        │
+│  (22 backends, BYO)   │                        │
 └──────────┬────────────┘                        │
            │                                     │
            ▼                                     ▼
@@ -280,7 +289,7 @@ On verification failure: retry with new creds, skip (save anyway), or abort.
 
 ## Scanners
 
-Eight scanner wrappers plus a generic SARIF 2.1.0 reader. Findings flow through a uniform contract: content-fingerprint dedup, KEV/EPSS/CVSS enrichment, severity upgrade on KEV hit.
+Eleven scanner wrappers plus a generic SARIF 2.1.0 reader. Findings flow through a uniform contract: content-fingerprint dedup, KEV/EPSS/CVSS enrichment, severity upgrade on KEV hit.
 
 | Tool          | Role                                       |
 |---------------|--------------------------------------------|
@@ -292,6 +301,9 @@ Eight scanner wrappers plus a generic SARIF 2.1.0 reader. Findings flow through 
 | Grype         | SBOM / image vulnerability scan            |
 | Nuclei        | Template-driven network / web probes       |
 | Nmap          | Network reconnaissance                     |
+| Checkov       | IaC / Terraform / CloudFormation policy    |
+| KICS          | IaC misconfiguration + compliance checks   |
+| Falco         | Runtime syscall / container threat detect  |
 | SARIF reader  | Ingest any SARIF 2.1.0 output              |
 
 ## Security Harness
